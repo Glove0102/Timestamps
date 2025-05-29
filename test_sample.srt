@@ -1,0 +1,31 @@
+1
+00:00:00,000 --> 00:00:15,000
+Welcome to today's tutorial on web development.
+
+2
+00:00:15,000 --> 00:00:30,000
+We'll start by discussing the basics of HTML and CSS.
+
+3
+00:00:30,000 --> 00:01:00,000
+HTML provides the structure for web pages while CSS handles styling.
+
+4
+00:01:00,000 --> 00:01:30,000
+Now let's move on to JavaScript programming concepts.
+
+5
+00:01:30,000 --> 00:02:00,000
+JavaScript adds interactivity to your web applications.
+
+6
+00:02:00,000 --> 00:02:30,000
+We'll also cover modern frameworks like React and Vue.
+
+7
+00:02:30,000 --> 00:03:00,000
+Finally, we'll discuss deployment and hosting options.
+
+8
+00:03:00,000 --> 00:03:15,000
+Thanks for watching and don't forget to subscribe!

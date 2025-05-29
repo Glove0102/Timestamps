@@ -25,19 +25,28 @@ def index():
 def generate_timestamps():
     """Handle SRT file upload and generate topic-based timestamps"""
     try:
+        # Debug logging
+        logger.debug(f"Request files: {list(request.files.keys())}")
+        logger.debug(f"Request form: {dict(request.form)}")
+        
         # Validate file upload
         if 'srt_file' not in request.files:
+            logger.warning("No 'srt_file' key in request.files")
             flash('No file selected', 'error')
             return redirect(url_for('index'))
         
         file = request.files['srt_file']
         context = request.form.get('context', '').strip()
         
-        if file.filename == '':
+        logger.debug(f"File object: {file}, filename: '{file.filename}'")
+        
+        if not file or file.filename == '':
+            logger.warning(f"No file selected or empty filename: {file}")
             flash('No file selected', 'error')
             return redirect(url_for('index'))
         
-        if not file or not allowed_file(file.filename):
+        # Check file extension
+        if not file.filename or not allowed_file(file.filename):
             flash('Please upload a valid SRT file', 'error')
             return redirect(url_for('index'))
         

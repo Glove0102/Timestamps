@@ -80,9 +80,14 @@ function initializeFileUpload() {
     }
 
     function updateFileInput(file) {
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        fileInput.files = dataTransfer.files;
+        try {
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+        } catch (error) {
+            // Fallback: just show the file as selected without updating the input
+            console.log('DataTransfer not supported, file will be handled by drop event');
+        }
     }
 
     function showSelectedFile(fileName) {

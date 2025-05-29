@@ -76,14 +76,13 @@ Example output format:
         # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
         # do not change this unless explicitly requested by the user
         response = openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1-mini-2025-04-14",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-            max_tokens=2000
+            max_completion_tokens=2000,
+            response_format={"type": "json_object"}
         )
         
         # Parse the response
