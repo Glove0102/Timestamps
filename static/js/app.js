@@ -153,9 +153,8 @@ function initializeFormSubmission() {
         // Show loading state
         showLoadingState(true);
         
-        // Disable form to prevent double submission
-        const formElements = form.querySelectorAll('input, textarea, button');
-        formElements.forEach(element => element.disabled = true);
+        // Let the form submit normally - don't prevent default
+        // The form will handle the file upload properly
     });
 }
 
