@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+        <!-- Header Section -->
+        <div class="text-center mb-5">
+            <h1 class="display-5 fw-bold mb-3">
+                <i class="fas fa-video me-3"></i>
+                SRT Timestamp Generator
+            </h1>
+            <p class="lead text-muted">
+                Upload your SRT subtitle file to generate intelligent topic-based timestamps using AI analysis
+            </p>
+        </div>
+
+        <!-- Upload Form -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-upload me-2"></i>
+                    Upload SRT File
+                </h5>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('generate_timestamps') }}" method="post" enctype="multipart/form-data" id="uploadForm">
+                    <!-- File Upload Area -->
+                    <div class="mb-4">
+                        <label for="srt_file" class="form-label">SRT Subtitle File</label>
+                        <div class="file-upload-area" id="fileUploadArea">
+                            <div class="file-upload-content">
+                                <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                                <p class="mb-2">Drag and drop your SRT file here</p>
+                                <p class="text-muted small">or</p>
+                                <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('srt_file').click()">
+                                    Choose File
+                                </button>
+                                <input type="file" id="srt_file" name="srt_file" accept=".srt" class="d-none" required>
+                            </div>
+                            <div class="file-upload-selected d-none" id="fileSelected">
+                                <i class="fas fa-file-alt fa-2x text-success mb-2"></i>
+                                <p class="mb-0" id="selectedFileName">filename.srt</p>
+                                <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearFile()">
+                                    <i class="fas fa-times me-1"></i>
+                                    Remove
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Context Input -->
+                    <div class="mb-4">
+                        <label for="context" class="form-label">
+                            Additional Context <span class="text-muted">(Optional)</span>
+                        </label>
+                        <textarea class="form-control" id="context" name="context" rows="3" 
+                                placeholder="Provide additional context about the video content to improve topic detection..."></textarea>
+                        <div class="form-text">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Adding context about your video content helps generate more accurate topic timestamps
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                            <i class="fas fa-magic me-2"></i>
+                            Generate Timestamps
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        {% if timestamps %}
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-list-ol me-2"></i>
+                    Generated Timestamps
+                </h5>
+                <button type="button" class="btn btn-outline-success btn-sm" onclick="copyTimestamps()">
+                    <i class="fas fa-copy me-1"></i>
+                    Copy All
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-file me-2"></i>
+                    <strong>File:</strong> {{ filename }}
+                    {% if request_id %}
+                    <br>
+                    <i class="fas fa-link me-2"></i>
+                    <strong>Direct Link:</strong> 
+                    <a href="{{ url_for('get_result', request_id=request_id) }}" class="alert-link">
+                        {{ url_for('get_result', request_id=request_id, _external=True) }}
+                    </a>
+                    {% endif %}
+                </div>
+
+                <div class="timestamps-container" id="timestampsContent">
+                    {% for timestamp in timestamps %}
+                    <div class="timestamp-item">
+                        <i class="fas fa-clock me-2 text-muted"></i>
+                        {{ timestamp }}
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="mt-3">
+                    <button type="button" class="btn btn-success" onclick="copyTimestamps()">
+                        <i class="fas fa-copy me-2"></i>
+                        Copy Timestamps
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- How it Works Section -->
+        {% if not timestamps %}
+        <div class="card shadow-sm mt-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-question-circle me-2"></i>
+                    How It Works
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 text-center mb-3">
+                        <i class="fas fa-upload fa-2x text-primary mb-2"></i>
+                        <h6>1. Upload</h6>
+                        <p class="text-muted small">Upload your SRT subtitle file</p>
+                    </div>
+                    <div class="col-md-4 text-center mb-3">
+                        <i class="fas fa-brain fa-2x text-info mb-2"></i>
+                        <h6>2. Analyze</h6>
+                        <p class="text-muted small">AI analyzes content for topic changes</p>
+                    </div>
+                    <div class="col-md-4 text-center mb-3">
+                        <i class="fas fa-list fa-2x text-success mb-2"></i>
+                        <h6>3. Generate</h6>
+                        <p class="text-muted small">Get formatted topic timestamps</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Copy Success Toast -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+    <div id="copyToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="toast-header">
+            <i class="fas fa-check-circle text-success me-2"></i>
+            <strong class="me-auto">Success</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+        <div class="toast-body">
+            Timestamps copied to clipboard!
+        </div>
+    </div>
+</div>
+{% endblock %}
