@@ -21,7 +21,16 @@ function initializeFileUpload() {
     fileUploadArea.addEventListener('dragover', handleDragOver);
     fileUploadArea.addEventListener('dragleave', handleDragLeave);
     fileUploadArea.addEventListener('drop', handleDrop);
-    fileUploadArea.addEventListener('click', () => fileInput.click());
+    
+    // Add click handler to the choose file button specifically
+    const chooseFileBtn = document.getElementById('chooseFileBtn');
+    if (chooseFileBtn) {
+        chooseFileBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            fileInput.click();
+        });
+    }
 
     // File input change event
     fileInput.addEventListener('change', handleFileSelect);
@@ -84,9 +93,22 @@ function initializeFileUpload() {
             const dataTransfer = new DataTransfer();
             dataTransfer.items.add(file);
             fileInput.files = dataTransfer.files;
+            
+            // Trigger change event to ensure form validation works
+            const changeEvent = new Event('change', { bubbles: true });
+            fileInput.dispatchEvent(changeEvent);
         } catch (error) {
-            // Fallback: just show the file as selected without updating the input
-            console.log('DataTransfer not supported, file will be handled by drop event');
+            console.log('DataTransfer not supported, using fallback');
+            // Create a new file input with the dropped file
+            const newInput = document.createElement('input');
+            newInput.type = 'file';
+            newInput.name = 'srt_file';
+            newInput.accept = '.srt';
+            newInput.style.display = 'none';
+            
+            // Replace the old input
+            fileInput.parentNode.replaceChild(newInput, fileInput);
+            fileInput = newInput;
         }
     }
 
