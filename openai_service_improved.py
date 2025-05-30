@@ -46,9 +46,20 @@ def generate_timestamps_for_long_video_simple(srt_entries: List[Dict[str, str]],
     logger.info(f"Processing long video: {total_duration:.1f} minutes with {len(srt_entries)} entries")
     
     # Sample entries throughout the video for better coverage
-    sample_size = min(2000, len(srt_entries))  # Limit to avoid token limits
+    # Be more conservative with token usage for very long videos
+    sample_size = min(1500, len(srt_entries))  # More conservative limit
     step = max(1, len(srt_entries) // sample_size)
     sampled_entries = srt_entries[::step]
+    
+    # Further reduce if the content is still too large
+    total_chars = sum(len(entry['text']) for entry in sampled_entries)
+    if total_chars > 30000:  # Much more conservative - roughly 10k tokens
+        reduction_factor = 30000 / total_chars
+        new_sample_size = int(len(sampled_entries) * reduction_factor)
+        step = max(1, len(sampled_entries) // new_sample_size)
+        sampled_entries = sampled_entries[::step]
+    
+    logger.info(f"Final content size: {sum(len(entry['text']) for entry in sampled_entries)} characters")
     
     logger.info(f"Sampling {len(sampled_entries)} entries from {len(srt_entries)} total entries")
     
@@ -60,41 +71,36 @@ def generate_timestamps_for_long_video_simple(srt_entries: List[Dict[str, str]],
     formatted_content = '\n'.join(formatted_lines)
     
     # Calculate expected number of timestamps
-    expected_timestamps = max(12, int(total_duration / 10))  # One every 10 minutes minimum
+    expected_timestamps = max(8, int(total_duration / 15))  # One every 15 minutes, more reasonable
     
     system_prompt = f"""You are an expert at analyzing video content and identifying topic segments from subtitles.
-Your task is to analyze subtitle text with timestamps and identify distinct topic segments throughout the entire video.
 
-This is a long video ({total_duration:.0f} minutes). You MUST generate at least {expected_timestamps} timestamps spread evenly throughout the entire duration.
+Analyze the provided subtitle content and create {expected_timestamps} topic-based timestamps.
 
 Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
 
-CRITICAL REQUIREMENTS:
-- Generate {expected_timestamps}-{expected_timestamps + 5} timestamps covering the ENTIRE video duration
-- Use timestamps that appear in the provided subtitle content
-- Ensure timestamps are spread from beginning to end of the video
-- Use the EXACT format "H:MM:SS" for timestamps
-- Descriptions should be 60-120 characters describing the content
+Requirements:
+- Generate exactly {expected_timestamps} timestamps
+- Use timestamps from the subtitle content
+- Use format "H:MM:SS" for time
+- Keep descriptions under 100 characters
+- Spread timestamps across the video duration
 
-Example output format:
+Example:
 {{
   "timestamps": [
-    {{"time": "0:00:00", "description": "Opening and introduction"}},
-    {{"time": "0:15:30", "description": "First main topic discussion"}},
-    {{"time": "0:45:15", "description": "Transition to second topic"}},
-    {{"time": "1:15:30", "description": "Deep dive into technical details"}},
-    {{"time": "1:45:00", "description": "Q&A session begins"}},
-    {{"time": "2:15:30", "description": "Final thoughts and conclusion"}}
+    {{"time": "1:15:30", "description": "Discussion about main topic"}},
+    {{"time": "2:45:00", "description": "Transition to new subject"}}
   ]
 }}"""
 
-    user_prompt = f"""Analyze the following subtitle content from a {total_duration:.0f}-minute video and identify topic segments throughout the ENTIRE duration:
+    user_prompt = f"""Analyze this {total_duration:.0f}-minute video content and create {expected_timestamps} timestamps:
 
 {formatted_content}
 
-Additional context: {context if context else 'General content analysis'}
+Context: {context if context else 'General video content'}
 
-You must generate {expected_timestamps} timestamps that cover the full video from start to finish. Look for natural topic transitions, subject changes, and content shifts throughout the entire timeline."""
+Generate {expected_timestamps} timestamps spread across the full duration."""
 
     try:
         logger.info(f"Sending request to OpenAI for long video analysis")
@@ -110,7 +116,13 @@ You must generate {expected_timestamps} timestamps that cover the full video fro
         )
         
         response_content = response.choices[0].message.content
+        logger.debug(f"Raw OpenAI response: {response}")
+        logger.debug(f"Response content: {response_content}")
+        
         if not response_content:
+            logger.error("Empty response content from OpenAI")
+            # Try to get more info about the response
+            logger.error(f"Full response object: {response}")
             raise OpenAIServiceError("Empty response from OpenAI")
         
         logger.debug(f"Received response from OpenAI: {response_content[:300]}...")
