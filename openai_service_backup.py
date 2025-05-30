@@ -166,51 +166,29 @@ def merge_chunk_results(chunk_results: List[List[str]], chunk_info: List[Tuple[L
     logger.debug(f"Merged {len(all_timestamps)} unique timestamps from {len(chunk_results)} chunks")
     return all_timestamps
 
-
-def _make_openai_request(system_prompt: str, user_prompt: str) -> List[str]:
-    """Make a request to OpenAI and parse the response."""
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        max_completion_tokens=4000,
-        response_format={"type": "json_object"},
-        timeout=90
-    )
+def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
+    """
+    Generate topic-based timestamps using OpenAI API.
     
-    response_content = response.choices[0].message.content
-    if not response_content:
-        return []
+    Args:
+        srt_entries (List[Dict[str, str]]): List of SRT entries with start, end, text
+        context (str, optional): Additional context for better topic detection
+        
+    Returns:
+        List[str]: List of formatted timestamps with topic descriptions
+        
+    Raises:
+        OpenAIServiceError: If OpenAI API call fails or returns invalid response
+    """
+    if not openai_client:
+        raise OpenAIServiceError("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
     
     try:
-        result = json.loads(response_content)
-        timestamps_data = result.get("timestamps", [])
+        # Format SRT content for analysis
+        formatted_content = format_srt_for_openai(srt_entries)
         
-        # Format timestamps for display
-        formatted_timestamps = []
-        for item in timestamps_data:
-            time_str = item.get("time", "")
-            description = item.get("description", "")
-            
-            if time_str and description:
-                formatted_timestamps.append(f"{time_str} - {description}")
-            else:
-                logger.warning(f"Skipping malformed timestamp entry: {item}")
-        
-        return formatted_timestamps
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse OpenAI JSON response: {str(e)}")
-        raise OpenAIServiceError(f"Invalid JSON response from OpenAI: {str(e)}")
-
-
-def _process_single_chunk(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
-    """Process a single chunk (original behavior for small files)."""
-    formatted_content = format_srt_for_openai(srt_entries)
-    
-    system_prompt = """You are an expert at analyzing video content and identifying topic segments from subtitles. 
+        # Build the system prompt
+        system_prompt = """You are an expert at analyzing video content and identifying topic segments from subtitles. 
 Your task is to analyze subtitle text with timestamps and identify distinct topic segments or content changes.
 
 Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
@@ -227,123 +205,74 @@ Example output format:
 {
   "timestamps": [
     {"time": "0:00:00", "description": "Woody introduces the show and guest, Taylor the sponsors - New mystery sponsor!"},
-    {"time": "0:02:15", "description": "Why Ed would never do a 'Top Gear' style show & how brand deals ruined content"},
-    {"time": "0:15:30", "description": "Movie/TV talk: Tom Cruise, Yellowstone and why every actor is CGI deaged in 2025"}
+    {"time": "0:02:15", "description": "Why Ed would never do a ‘Top Gear’ style show & how brand deals ruined content"},
+    {"time": "0:15:30", "description": "Movie/TV talk: Tom Cruise, Yellowstone and why every actor is CGI deaged in 2025"},
+    {"time": "0:15:30", "description": "Demi Moore’s huge bush, female body hair trends & PKA’s hairy legs"},
+    {"time": "0:28:45", "description": "The guys call it a show"}
   ]
 }"""
 
-    user_prompt = f"Analyze the following subtitle content and identify topic segments:\n\n{formatted_content}"
-    
-    if context:
-        user_prompt += f"\n\nAdditional context: {context}"
-    
-    user_prompt += "\n\nGenerate topic-based timestamps in JSON format as specified."
-    
-    return _make_openai_request(system_prompt, user_prompt)
-
-
-def _process_chunk_with_context(chunk_entries: List[Dict[str, str]], context: str, chunk_context: str, chunk_num: int, total_chunks: int) -> List[str]:
-    """Process a chunk with context from previous chunks."""
-    formatted_content = format_srt_for_openai(chunk_entries)
-    
-    system_prompt = """You are an expert at analyzing video content and identifying topic segments from subtitles. 
-Your task is to analyze subtitle text with timestamps and identify distinct topic segments or content changes.
-
-Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
-Each timestamp should mark the beginning of a new topic or significant content shift.
-
-Guidelines:
-- Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
-- Descriptions should be brief but descriptive and detailed as possible. Use overall show context to get idea of whats being talked about. (under 115 characters)
-- Focus on major topic changes rather than minor details
-- This is part of a longer video, so focus on NEW topics that begin in this section"""
-
-    user_prompt = f"Analyze this section of subtitle content (part {chunk_num} of {total_chunks}) and identify topic segments:\n\n{formatted_content}"
-    
-    if chunk_context:
-        user_prompt = f"Previous context: {chunk_context}\n\n{user_prompt}"
-    
-    if context:
-        user_prompt += f"\n\nAdditional context: {context}"
-    
-    user_prompt += f"\n\nThis is part {chunk_num} of {total_chunks} from a longer video. Focus on new topics that begin in this section.\nGenerate topic-based timestamps in JSON format as specified."
-    
-    return _make_openai_request(system_prompt, user_prompt)
-
-
-def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
-    """
-    Generate topic-based timestamps using OpenAI API with smart chunking for large files.
-    
-    Args:
-        srt_entries (List[Dict[str, str]]): List of SRT entries with start, end, text
-        context (str, optional): Additional context for better topic detection
+        # Build the user prompt
+        user_prompt = f"Analyze the following subtitle content and identify topic segments:\n\n{formatted_content}"
         
-    Returns:
-        List[str]: List of formatted timestamps with topic descriptions
+        if context:
+            user_prompt += f"\n\nAdditional context: {context}"
         
-    Raises:
-        OpenAIServiceError: If OpenAI API call fails or returns invalid response
-    """
-    if not openai_client:
-        raise OpenAIServiceError("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
-    
-    try:
-        # Calculate optimal chunk size and create chunks
-        chunk_size = calculate_chunk_size(srt_entries)
-        chunks = create_smart_chunks(srt_entries, chunk_size)
+        user_prompt += "\n\nGenerate topic-based timestamps in JSON format as specified."
         
-        logger.debug(f"Processing {len(srt_entries)} entries in {len(chunks)} chunks")
+        logger.debug(f"Sending request to OpenAI with {len(srt_entries)} subtitle entries")
         
-        # For small files, use the original single-request approach
-        if len(chunks) == 1:
-            return _process_single_chunk(srt_entries, context)
+        # Make API call to OpenAI with extended timeout
+        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+        # do not change this unless explicitly requested by the user
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_completion_tokens=10000,
+            response_format={"type": "json_object"},
+            timeout=120  # 2 minutes timeout for large files
+        )
         
-        # Process multiple chunks with context
-        chunk_results = []
-        chunk_context = ""
+        # Parse the response
+        response_content = response.choices[0].message.content
+        logger.debug(f"Received response from OpenAI: {response_content[:200]}...")
         
-        for chunk_idx, (chunk_entries, start_idx, end_idx) in enumerate(chunks):
-            try:
-                logger.debug(f"Processing chunk {chunk_idx + 1}/{len(chunks)} (entries {start_idx+1}-{end_idx+1})")
+        try:
+            result = json.loads(response_content)
+            timestamps_data = result.get("timestamps", [])
+            
+            if not timestamps_data:
+                raise OpenAIServiceError("No timestamps found in OpenAI response")
+            
+            # Format timestamps for display
+            formatted_timestamps = []
+            for item in timestamps_data:
+                time = item.get("time", "")
+                description = item.get("description", "")
                 
-                # Process chunk with context from previous chunks
-                chunk_timestamps = _process_chunk_with_context(
-                    chunk_entries, context, chunk_context, chunk_idx + 1, len(chunks)
-                )
-                
-                chunk_results.append(chunk_timestamps)
-                
-                # Update context for next chunk (last few topics)
-                if chunk_timestamps:
-                    recent_topics = [ts.split(' - ')[1] for ts in chunk_timestamps[-2:]]
-                    chunk_context = f"Recent topics: {', '.join(recent_topics)}"
-                
-                logger.debug(f"Chunk {chunk_idx + 1} generated {len(chunk_timestamps)} timestamps")
-                
-            except Exception as e:
-                logger.error(f"Error processing chunk {chunk_idx + 1}: {str(e)}")
-                # Continue with other chunks even if one fails
-                chunk_results.append([])
+                if time and description:
+                    formatted_timestamps.append(f"{time} - {description}")
+                else:
+                    logger.warning(f"Skipping malformed timestamp entry: {item}")
+            
+            if not formatted_timestamps:
+                raise OpenAIServiceError("No valid timestamps generated")
+            
+            logger.info(f"Successfully generated {len(formatted_timestamps)} topic timestamps")
+            return formatted_timestamps
         
-        # Merge results from all chunks
-        if not any(chunk_results):
-            raise OpenAIServiceError("No timestamps could be generated from any chunk")
-        
-        final_timestamps = merge_chunk_results(chunk_results, chunks)
-        
-        if not final_timestamps:
-            raise OpenAIServiceError("No valid timestamps could be extracted")
-        
-        logger.info(f"Successfully generated {len(final_timestamps)} total timestamps from {len(chunks)} chunks")
-        return final_timestamps
-        
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse OpenAI JSON response: {str(e)}")
+            raise OpenAIServiceError(f"Invalid JSON response from OpenAI: {str(e)}")
+    
     except OpenAIServiceError:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in generate_topic_timestamps: {str(e)}")
+        logger.error(f"Unexpected error in OpenAI service: {str(e)}")
         raise OpenAIServiceError(f"Failed to generate timestamps: {str(e)}")
-
 
 def format_srt_for_openai(srt_entries: List[Dict[str, str]]) -> str:
     """
