@@ -19,7 +19,7 @@ if not OPENAI_API_KEY:
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY or "", timeout=240.0) if OPENAI_API_KEY else None
 
-def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
+def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = "") -> List[str]:
     """
     Generate topic-based timestamps using OpenAI API.
     
@@ -67,7 +67,7 @@ Example output format:
         # Build the user prompt
         user_prompt = f"Analyze the following subtitle content and identify topic segments:\n\n{formatted_content}"
         
-        if context:
+        if context and context.strip():
             user_prompt += f"\n\nAdditional context: {context}"
         
         user_prompt += "\n\nGenerate topic-based timestamps in JSON format as specified."
@@ -76,6 +76,7 @@ Example output format:
         
         # Make API call to OpenAI with retry logic for connection issues
         max_retries = 3
+        response = None
         for attempt in range(max_retries):
             try:
                 logger.info(f"Making OpenAI API call (attempt {attempt + 1}/{max_retries})")
@@ -98,6 +99,9 @@ Example output format:
                 # Wait before retry (exponential backoff)
                 import time
                 time.sleep(2 ** attempt)
+        
+        if response is None:
+            raise OpenAIServiceError("No response received from OpenAI API")
         
         # Parse the response
         response_content = response.choices[0].message.content
