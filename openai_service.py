@@ -3,6 +3,8 @@ import json
 import logging
 from typing import List, Dict
 from openai import OpenAI
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not found in environment variables")
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY, timeout=240.0) if OPENAI_API_KEY else None
+openai_client = OpenAI(api_key=OPENAI_API_KEY or "", timeout=240.0) if OPENAI_API_KEY else None
 
 def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
     """
@@ -72,18 +74,30 @@ Example output format:
         
         logger.debug(f"Sending request to OpenAI with {len(srt_entries)} subtitle entries")
         
-        # Make API call to OpenAI
-        # the newest OpenAI model is "o4-mini-2025-04-16" which was released May 13, 2024.
-        # do not change this unless explicitly requested by the user
-        response = openai_client.chat.completions.create(
-            model="o4-mini-2025-04-16",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_completion_tokens=8000,
-            response_format={"type": "json_object"}
-        )
+        # Make API call to OpenAI with retry logic for connection issues
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Making OpenAI API call (attempt {attempt + 1}/{max_retries})")
+                # the newest OpenAI model is "o4-mini-2025-04-16" which was released May 13, 2024.
+                # do not change this unless explicitly requested by the user
+                response = openai_client.chat.completions.create(
+                    model="o4-mini-2025-04-16",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_completion_tokens=8000,
+                    response_format={"type": "json_object"}
+                )
+                break  # Success, exit retry loop
+            except Exception as e:
+                logger.warning(f"OpenAI API call attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:  # Last attempt
+                    raise OpenAIServiceError(f"Failed to connect to OpenAI after {max_retries} attempts: {str(e)}")
+                # Wait before retry (exponential backoff)
+                import time
+                time.sleep(2 ** attempt)
         
         # Parse the response
         response_content = response.choices[0].message.content
