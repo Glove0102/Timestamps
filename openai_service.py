@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import time
 from typing import List, Dict
 from openai import OpenAI
 
@@ -52,12 +53,21 @@ def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = 
             last_entry = srt_entries[-1]
             logger.info(f"Video duration: First entry at {srt_entries[0]['start']}, Last entry at {last_entry['end']}")
         
-        # Use chunking strategy for large videos (lowered threshold significantly)
-        if estimated_tokens > 50000 or len(srt_entries) > 1000:  # Much more conservative limit
-            logger.info(f"Large video detected ({estimated_tokens} tokens, {len(srt_entries)} entries). Using chunking strategy.")
+        # For very large videos, use chunking strategy
+        if estimated_tokens > 80000 or len(srt_entries) > 2000:
+            logger.info(f"Very large video detected ({estimated_tokens} tokens, {len(srt_entries)} entries). Using chunking strategy.")
             return _generate_timestamps_chunked(srt_entries, context)
         
-        # For smaller videos, use single request
+        # For regular large videos, try single request with higher token limit first
+        elif estimated_tokens > 30000 or len(srt_entries) > 800:
+            logger.info(f"Large video detected ({estimated_tokens} tokens, {len(srt_entries)} entries). Trying single request with extended limits.")
+            try:
+                return _generate_timestamps_single_extended(srt_entries, context, formatted_content)
+            except Exception as e:
+                logger.warning(f"Single request failed, falling back to chunking: {str(e)}")
+                return _generate_timestamps_chunked(srt_entries, context)
+        
+        # For smaller videos, use standard single request
         return _generate_timestamps_single(srt_entries, context, formatted_content)
     
     except OpenAIServiceError:
@@ -123,6 +133,71 @@ Example output format:
     
     return _parse_openai_response(response_content)
 
+def _generate_timestamps_single_extended(srt_entries: List[Dict[str, str]], context: str = None, formatted_content: str = "") -> List[str]:
+    """Generate timestamps for larger videos in a single API call with extended settings."""
+    
+    if not openai_client:
+        raise OpenAIServiceError("OpenAI client not initialized")
+    
+    # Build an enhanced system prompt for long content
+    system_prompt = """You are an expert at analyzing video content and identifying topic segments from subtitles. 
+Your task is to analyze subtitle text with timestamps and identify distinct topic segments or content changes.
+
+This is a LONG VIDEO (potentially several hours). Your job is to:
+1. Read through the ENTIRE content provided
+2. Identify major topic transitions and content shifts throughout the FULL duration
+3. Generate timestamps that span the complete video length
+
+Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
+Each timestamp should mark the beginning of a new topic or significant content shift.
+
+Guidelines:
+- Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45", "2:15:30")
+- Descriptions should be brief but descriptive (under 115 characters)
+- Focus on meaningful content transitions, not minor topic shifts
+- CRITICAL: Analyze the ENTIRE content provided - do not stop early
+- Generate timestamps throughout the COMPLETE duration of the video
+- For long videos, aim for timestamps every 10-20 minutes at major topic boundaries
+
+Example output format:
+{
+  "timestamps": [
+    {"time": "0:00:00", "description": "Introduction and sponsor mentions"},
+    {"time": "0:12:15", "description": "Main topic discussion begins"},
+    {"time": "0:35:30", "description": "Technical details and examples"},
+    {"time": "1:02:45", "description": "Guest interview segment"},
+    {"time": "1:28:15", "description": "Q&A and audience questions"},
+    {"time": "1:45:30", "description": "Final thoughts and conclusions"}
+  ]
+}"""
+
+    # Build the user prompt with emphasis on complete analysis
+    user_prompt = f"Analyze the following subtitle content and identify topic segments throughout the ENTIRE video:\n\n{formatted_content}"
+    
+    if context:
+        user_prompt += f"\n\nAdditional context: {context}"
+    
+    user_prompt += "\n\nCRITICAL INSTRUCTIONS:\n- Process the COMPLETE content provided\n- Generate timestamps covering the ENTIRE video duration\n- Do NOT stop analyzing partway through\n- Look at the timestamps to see the full video length and ensure your output covers it all"
+    
+    logger.debug(f"Sending extended single request to OpenAI with {len(srt_entries)} subtitle entries")
+    
+    # Make API call with extended token limits
+    response = openai_client.chat.completions.create(
+        model="gpt-4.1-mini-2025-04-14",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        max_completion_tokens=20000,  # Increased for longer outputs
+        response_format={"type": "json_object"}
+    )
+    
+    response_content = response.choices[0].message.content
+    if not response_content:
+        raise OpenAIServiceError("Empty response from OpenAI")
+    
+    return _parse_openai_response(response_content)
+
 def _generate_timestamps_chunked(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
     """Generate timestamps for large videos using chunking strategy."""
     
@@ -173,26 +248,40 @@ Example output format:
         user_prompt += f"\n\nGenerate timestamps only for content within {chunk_start_time} - {chunk_end_time}."
         
         try:
-            response = openai_client.chat.completions.create(
-                model="gpt-4.1-mini-2025-04-14",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                max_completion_tokens=8000,
-                response_format={"type": "json_object"}
-            )
-            
-            response_content = response.choices[0].message.content
-            if not response_content:
-                logger.warning(f"Empty response for chunk {i+1}")
-                continue
-                
-            chunk_timestamps = _parse_openai_response(response_content)
-            all_timestamps.extend(chunk_timestamps)
+            # Add retry logic for network issues
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = openai_client.chat.completions.create(
+                        model="gpt-4.1-mini-2025-04-14",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        max_completion_tokens=8000,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    response_content = response.choices[0].message.content
+                    if not response_content:
+                        logger.warning(f"Empty response for chunk {i+1}")
+                        break
+                        
+                    chunk_timestamps = _parse_openai_response(response_content)
+                    all_timestamps.extend(chunk_timestamps)
+                    logger.info(f"Successfully processed chunk {i+1}/{len(chunks)} - got {len(chunk_timestamps)} timestamps")
+                    break  # Success, exit retry loop
+                    
+                except Exception as retry_error:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2  # Exponential backoff
+                        logger.warning(f"Attempt {attempt + 1} failed for chunk {i+1}, retrying in {wait_time}s: {str(retry_error)}")
+                        time.sleep(wait_time)
+                    else:
+                        raise retry_error
             
         except Exception as e:
-            logger.error(f"Error processing chunk {i+1}: {str(e)}")
+            logger.error(f"Failed to process chunk {i+1} after all retries: {str(e)}")
             # Continue with other chunks rather than failing completely
             continue
     
