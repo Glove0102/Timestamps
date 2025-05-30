@@ -206,23 +206,30 @@ def chunk_srt_entries(srt_entries: List[Dict[str, str]], chunk_duration_minutes:
     chunks = []
     current_chunk = []
     chunk_duration_seconds = chunk_duration_minutes * 60
-    chunk_start_seconds = 0
+    
+    # Start from the beginning of the video
+    first_entry_start = parse_srt_time_to_seconds(srt_entries[0]['start'])
+    chunk_end_time = first_entry_start + chunk_duration_seconds
     
     for entry in srt_entries:
         entry_start_seconds = parse_srt_time_to_seconds(entry['start'])
         
-        # If this entry would exceed the chunk duration, start a new chunk
-        if entry_start_seconds >= chunk_start_seconds + chunk_duration_seconds and current_chunk:
+        # If this entry starts after the current chunk's end time, finalize the chunk
+        if entry_start_seconds >= chunk_end_time and current_chunk:
             chunks.append(current_chunk)
+            logger.debug(f"Created chunk with {len(current_chunk)} entries, duration: {(parse_srt_time_to_seconds(current_chunk[-1]['end']) - parse_srt_time_to_seconds(current_chunk[0]['start']))/60:.1f} minutes")
             current_chunk = []
-            chunk_start_seconds = entry_start_seconds
+            # Set the next chunk end time
+            chunk_end_time = entry_start_seconds + chunk_duration_seconds
         
         current_chunk.append(entry)
     
     # Add the last chunk if it has entries
     if current_chunk:
         chunks.append(current_chunk)
+        logger.debug(f"Created final chunk with {len(current_chunk)} entries")
     
+    logger.info(f"Split {len(srt_entries)} entries into {len(chunks)} chunks")
     return chunks
 
 def generate_topic_timestamps_for_long_video(srt_entries: List[Dict[str, str]], context: str = None, chunk_duration_minutes: int = 60) -> List[str]:
@@ -265,39 +272,44 @@ def generate_topic_timestamps_for_long_video(srt_entries: List[Dict[str, str]], 
             formatted_content = format_srt_for_openai(chunk)
             
             # Adjust system prompt for chunk processing
-            topics_per_hour = 10  # Base rate
-            expected_topics = max(2, int(topics_per_hour * chunk_duration / 60))
+            topics_per_hour = 8  # Base rate - more conservative
+            expected_topics = max(3, int(topics_per_hour * chunk_duration / 60))
             
             system_prompt = f"""You are an expert at analyzing video content and identifying topic segments from subtitles. 
 Your task is to analyze subtitle text with timestamps and identify distinct topic segments or content changes.
 
-This is chunk {chunk_index + 1} of {len(chunks)} from a longer video. Focus on identifying {expected_topics}-{expected_topics + 2} meaningful topic segments within this chunk.
+This is chunk {chunk_index + 1} of {len(chunks)} from a longer video. You MUST identify at least {expected_topics} meaningful topic segments within this chunk.
 
 Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
 Each timestamp should mark the beginning of a new topic or significant content shift.
 
-Guidelines:
-- Use the EXACT format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
-- Use the actual timestamps from the subtitle content, do not modify them
-- Descriptions should be brief but descriptive (80-140 characters)
-- Focus on meaningful content transitions, not minor topic shifts
-- Include {expected_topics}-{expected_topics + 2} topic segments for this chunk
+CRITICAL REQUIREMENTS:
+- You MUST generate at least {expected_topics} timestamps for this chunk
+- Use timestamps that appear in the provided subtitle content
+- Use the EXACT format "H:MM:SS" for timestamps (e.g., "0:15:30", "1:18:11", "2:23:45")
+- Look for natural conversation breaks, topic changes, or content shifts
+- Include timestamps from the beginning, middle, and end of the chunk
+- Descriptions should be 60-120 characters and describe what's happening
 
 Example output format:
 {{
   "timestamps": [
-    {{"time": "0:15:30", "description": "Technical details and examples"}},
-    {{"time": "0:28:45", "description": "Q&A and closing remarks"}}
+    {{"time": "1:15:30", "description": "Discussion about technical details and implementation"}},
+    {{"time": "1:28:45", "description": "Audience questions and answers session"}},
+    {{"time": "1:42:15", "description": "Moving to next major topic or segment"}}
   ]
 }}"""
 
             # Build the user prompt for this chunk
-            user_prompt = f"Analyze the following subtitle content chunk and identify topic segments:\n\n{formatted_content}"
+            chunk_start_time_str = chunk[0]['start'] if chunk else "0:00:00"
+            chunk_end_time_str = chunk[-1]['end'] if chunk else "0:00:00"
+            
+            user_prompt = f"Analyze the following subtitle content chunk (from {chunk_start_time_str} to {chunk_end_time_str}) and identify topic segments:\n\n{formatted_content}"
             
             if context:
                 user_prompt += f"\n\nAdditional context: {context}"
             
-            user_prompt += f"\n\nGenerate topic-based timestamps in JSON format as specified. This is chunk {chunk_index + 1} of a {video_duration:.0f}-minute video."
+            user_prompt += f"\n\nYou must generate at least {expected_topics} timestamps for this chunk. This is chunk {chunk_index + 1} of {len(chunks)} from a {video_duration:.0f}-minute video. Focus on identifying natural breaks and topic transitions within this specific time range."
             
             logger.debug(f"Sending chunk {chunk_index + 1} to OpenAI with {len(chunk)} subtitle entries")
             
@@ -337,9 +349,22 @@ Example output format:
                 
                 if chunk_timestamps:
                     all_timestamps.extend(chunk_timestamps)
-                    logger.info(f"Chunk {chunk_index + 1} generated {len(chunk_timestamps)} timestamps")
+                    logger.info(f"Chunk {chunk_index + 1} generated {len(chunk_timestamps)} timestamps: {[ts.split(' - ')[0] for ts in chunk_timestamps]}")
                 else:
                     logger.warning(f"No valid timestamps generated for chunk {chunk_index + 1}")
+                    logger.debug(f"Raw OpenAI response for failed chunk {chunk_index + 1}: {response_content}")
+                    
+                    # Try to extract any timestamps from the raw response as fallback
+                    import re
+                    time_pattern = r'\d{1,2}:\d{2}:\d{2}'
+                    found_times = re.findall(time_pattern, response_content)
+                    if found_times:
+                        logger.info(f"Found fallback timestamps in chunk {chunk_index + 1}: {found_times}")
+                        for time_stamp in found_times[:expected_topics]:
+                            fallback_desc = f"Topic segment at {time_stamp}"
+                            all_timestamps.append(f"{time_stamp} - {fallback_desc}")
+                    else:
+                        logger.error(f"No timestamps found at all in chunk {chunk_index + 1} response")
             
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse OpenAI JSON response for chunk {chunk_index + 1}: {str(e)}")
@@ -353,7 +378,15 @@ Example output format:
         raise OpenAIServiceError("No timestamps could be generated for any chunks")
     
     # Sort timestamps by time to ensure proper order
-    all_timestamps.sort(key=lambda x: parse_srt_time_to_seconds(x.split(' - ')[0]))
+    def safe_sort_key(timestamp_str):
+        try:
+            time_part = timestamp_str.split(' - ')[0]
+            return parse_srt_time_to_seconds(time_part)
+        except (IndexError, ValueError):
+            logger.warning(f"Failed to parse timestamp for sorting: {timestamp_str}")
+            return 0
+    
+    all_timestamps.sort(key=safe_sort_key)
     
     logger.info(f"Successfully generated {len(all_timestamps)} total topic timestamps from {len(chunks)} chunks")
     return all_timestamps
