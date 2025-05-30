@@ -73,9 +73,10 @@ Example output format:
         logger.debug(f"Sending request to OpenAI with {len(srt_entries)} subtitle entries")
         
         # Make API call to OpenAI
-        # Using gpt-4o-mini which is a cost-effective model for this task
+        # the newest OpenAI model is "o4-mini-2025-04-16" which was released May 13, 2024.
+        # do not change this unless explicitly requested by the user
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="o4-mini-2025-04-16",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}

@@ -1,0 +1,92 @@
+{
+  "timestamps": [
+    {
+      "time": "0:00:00",
+      "description": "Episode intro and sponsor shout-outs for Lock and Load Blue Chew and Richard Ryan’s new book"
+    },
+    {
+      "time": "0:00:24",
+      "description": "Richard discusses getting his book published, acknowledgements, and writing process"
+    },
+    {
+      "time": "0:00:55",
+      "description": "Debate over book pricing—free or paid—introducing friction into digital consumption"
+    },
+    {
+      "time": "0:01:23",
+      "description": "Digital detox: contrasting physical media rituals (Blockbuster, VHS) with today’s instant streaming"
+    },
+    {
+      "time": "0:02:02",
+      "description": "Nostalgia for shared cultural tentpoles (Jurassic Park, Top Gun, radio hits) vs today’s fragmented feeds"
+    },
+    {
+      "time": "0:02:43",
+      "description": "Attention economy deep dive: Amazon one-click, frictionless spending, billions spent reducing barriers"
+    },
+    {
+      "time": "0:03:23",
+      "description": "Planning book launch strategy: low-price promo, 30-day journal, setting digital boundaries"
+    },
+    {
+      "time": "0:04:19",
+      "description": "Screen time reckoning: social media doomscroll, data harvesting, manipulative UX patterns"
+    },
+    {
+      "time": "0:05:33",
+      "description": "YouTube’s evolution: pre-2010 creator ecosystem, 2012 redesign, platform as kingmaker"
+    },
+    {
+      "time": "0:07:36",
+      "description": "“Reply girl” era on YouTube: algorithm gaming, comment bots and sidebar hijacks"
+    },
+    {
+      "time": "0:07:56",
+      "description": "New frontier—AI-generated video: Google VO, Flux, Pika; fake trailers and generative ads"
+    },
+    {
+      "time": "0:09:00",
+      "description": "Social media AI personas: hyperrealistic account farms and platform detection arms race"
+    },
+    {
+      "time": "0:10:26",
+      "description": "AI vs jobs debate: risk of displacing workers, universal basic income, breaking capitalism"
+    },
+    {
+      "time": "0:11:50",
+      "description": "Platform monopolies and censorship: Google/YouTube power, free speech, gun content demonetization"
+    },
+    {
+      "time": "0:13:02",
+      "description": "From samurai parables to longevity experiments: Richard shares book’s thought-provoking vignettes"
+    },
+    {
+      "time": "0:14:32",
+      "description": "Mid-episode sponsor break: full read of Blue Chew ad and promo code PKA"
+    },
+    {
+      "time": "0:16:29",
+      "description": "Exploring high-end dating services: matchmakers, Blush, Ryze, vip platforms vs Tinder swipes"
+    },
+    {
+      "time": "0:18:06",
+      "description": "Richard’s own matchmaking experiments: catfishing suspicions, Taiwan, AI-like candidates"
+    },
+    {
+      "time": "0:19:08",
+      "description": "Hinge hack: paying for likes list, direct Instagram outreach to validate genuine matches"
+    },
+    {
+      "time": "0:20:25",
+      "description": "Social media life hacks meltdown: trash DIY tips, random global content, bots vs real value"
+    },
+    {
+      "time": "0:22:07",
+      "description": "Gaming the algorithm redux: Heat Check, bot farms, YouTube metrics exploits revisited"
+    },
+    {
+      "time": "0:23:13",
+      "description": "Closing bits: Richard seeks feedback on DIY promotional short filmed for Blue Chew ad"
+    }
+  ]
+}
