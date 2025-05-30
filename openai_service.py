@@ -46,11 +46,10 @@ Return a JSON object with a "timestamps" array containing objects with "time" an
 Each timestamp should mark the beginning of a new topic or significant content shift.
 
 Guidelines:
-- Cover the entire content duration with timestamps. IF the content ends before the last timestamp, include a final timestamp at the end.
 - Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
-- Descriptions should be brief but descriptive (20-60 characters)
+- Descriptions should be brief but descriptive (80-140 characters)
 - Focus on meaningful content transitions, not minor topic shifts
-- Include 3-15 topic segments depending on content length
+- Include 8-12 topic segments per hour of content
 - Start with "0:00:00" if the content begins immediately
 
 Example output format:
@@ -77,7 +76,7 @@ Example output format:
         # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
         # do not change this unless explicitly requested by the user
         response = openai_client.chat.completions.create(
-            model="gpt-4.1-mini-2025-04-14",
+            model="o4-mini-2025-04-16",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
