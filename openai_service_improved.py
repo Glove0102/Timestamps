@@ -144,13 +144,13 @@ Example:
   ]
 }}"""
 
-    user_prompt = f"""Analyze this conversation segment and identify ONLY genuine topic changes:
+    user_prompt = f"""Analyze this conversation segment and identify ALL genuine topic changes:
 
 {formatted_content}
 
 Context: {context if context else 'Podcast/video content'}
 
-Mark timestamps only when the conversation genuinely shifts to a new topic or subject."""
+Find every moment where the conversation shifts to a new topic - could be 1 timestamp, could be 20 timestamps, depending on how many topic changes actually occur in this segment."""
 
     try:
         logger.info(f"Sending request to OpenAI for chunk {chunk_index + 1}")
