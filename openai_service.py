@@ -47,18 +47,19 @@ Each timestamp should mark the beginning of a new topic or significant content s
 
 Guidelines:
 - Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
-- Descriptions should be brief but descriptive and detailed as possible (under 115 characters)
+- Descriptions should be brief but descriptive and detailed as possible. Use overall show context to get idea of whats being talked about. (under 115 characters)
 - Focus on meaningful content transitions, not minor topic shifts
-- Longer the video, more the segments. Depending on content length
+- Number of segments should be reasonable (around 5-15 per hour of content)
 - Start with "0:00:00" if the content begins immediately
 
 Example output format:
 {
   "timestamps": [
-    {"time": "0:00:00", "description": "Introduction and sponsor mentions"},
-    {"time": "0:02:15", "description": "Main topic discussion begins"},
-    {"time": "0:15:30", "description": "Technical details and examples"},
-    {"time": "0:28:45", "description": "Q&A and closing remarks"}
+    {"time": "0:00:00", "description": "Woody introduces the show and guest, Taylor the sponsors - New mystery sponsor!"},
+    {"time": "0:02:15", "description": "Why Ed would never do a ‘Top Gear’ style show & how brand deals ruined content"},
+    {"time": "0:15:30", "description": "Movie/TV talk: Tom Cruise, Yellowstone and why every actor is CGI deaged in 2025"},
+    {"time": "0:15:30", "description": "Demi Moore’s huge bush, female body hair trends & PKA’s hairy legs"},
+    {"time": "0:28:45", "description": "The guys call it a show"}
   ]
 }"""
 
