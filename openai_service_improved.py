@@ -70,8 +70,9 @@ def generate_timestamps_for_long_video_simple(srt_entries: List[Dict[str, str]],
     
     formatted_content = '\n'.join(formatted_lines)
     
-    # Calculate expected number of timestamps
-    expected_timestamps = max(8, int(total_duration / 15))  # One every 15 minutes, more reasonable
+    # Calculate expected number of timestamps - much more detailed for long content
+    # Aim for one timestamp every 3-5 minutes for better granularity
+    expected_timestamps = max(16, int(total_duration / 4))  # One every 4 minutes for detailed breakdown
     
     system_prompt = f"""You are an expert at analyzing video content and identifying topic segments from subtitles.
 
