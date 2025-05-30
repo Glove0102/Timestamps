@@ -47,9 +47,9 @@ Each timestamp should mark the beginning of a new topic or significant content s
 
 Guidelines:
 - Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
-- Descriptions should be brief but descriptive (20-60 characters)
+- Descriptions should be brief but descriptive and detailed as possible (under 115 characters)
 - Focus on meaningful content transitions, not minor topic shifts
-- Include 3-10 topic segments depending on content length
+- Longer the video, more the segments. Depending on content length
 - Start with "0:00:00" if the content begins immediately
 
 Example output format:
@@ -81,7 +81,7 @@ Example output format:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            max_completion_tokens=2000,
+            max_completion_tokens=10000,
             response_format={"type": "json_object"}
         )
         
