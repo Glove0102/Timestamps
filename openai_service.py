@@ -3,8 +3,6 @@ import json
 import logging
 from typing import List, Dict
 from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +15,9 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not found in environment variables")
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY or "", timeout=240.0) if OPENAI_API_KEY else None
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = "") -> List[str]:
+def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
     """
     Generate topic-based timestamps using OpenAI API.
     
@@ -49,9 +47,9 @@ Each timestamp should mark the beginning of a new topic or significant content s
 
 Guidelines:
 - Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
-- Descriptions should as descriptive as possible in a single sentence (up to 140 characters)
+- Descriptions should be brief but descriptive (20-60 characters)
 - Focus on meaningful content transitions, not minor topic shifts
-- Include 8-25 topic segments depending on content length
+- Include 3-15 topic segments depending on content length
 - Start with "0:00:00" if the content begins immediately
 
 Example output format:
@@ -67,47 +65,28 @@ Example output format:
         # Build the user prompt
         user_prompt = f"Analyze the following subtitle content and identify topic segments:\n\n{formatted_content}"
         
-        if context and context.strip():
+        if context:
             user_prompt += f"\n\nAdditional context: {context}"
         
         user_prompt += "\n\nGenerate topic-based timestamps in JSON format as specified."
         
         logger.debug(f"Sending request to OpenAI with {len(srt_entries)} subtitle entries")
         
-        # Make API call to OpenAI with retry logic for connection issues
-        max_retries = 3
-        response = None
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Making OpenAI API call (attempt {attempt + 1}/{max_retries})")
-                # the newest OpenAI model is "o4-mini-2025-04-16" which was released May 13, 2024.
-                # do not change this unless explicitly requested by the user
-                response = openai_client.chat.completions.create(
-                    model="o4-mini-2025-04-16",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_completion_tokens=8000,
-                    response_format={"type": "json_object"}
-                )
-                break  # Success, exit retry loop
-            except Exception as e:
-                logger.warning(f"OpenAI API call attempt {attempt + 1} failed: {str(e)}")
-                if attempt == max_retries - 1:  # Last attempt
-                    raise OpenAIServiceError(f"Failed to connect to OpenAI after {max_retries} attempts: {str(e)}")
-                # Wait before retry (exponential backoff)
-                import time
-                time.sleep(2 ** attempt)
-        
-        if response is None:
-            raise OpenAIServiceError("No response received from OpenAI API")
+        # Make API call to OpenAI
+        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+        # do not change this unless explicitly requested by the user
+        response = openai_client.chat.completions.create(
+            model="gpt-4.1-mini-2025-04-14",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_completion_tokens=5000,
+            response_format={"type": "json_object"}
+        )
         
         # Parse the response
         response_content = response.choices[0].message.content
-        if not response_content:
-            raise OpenAIServiceError("Empty response from OpenAI")
-        
         logger.debug(f"Received response from OpenAI: {response_content[:200]}...")
         
         try:
