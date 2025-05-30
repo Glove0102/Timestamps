@@ -115,29 +115,32 @@ def process_video_chunk(chunk_entries: List[Dict[str, str]], chunk_index: int, t
 
 This is chunk {chunk_index + 1} of {total_chunks} from a longer podcast/video.
 
-Analyze the conversation and identify ONLY the moments where the topic actually changes - don't generate timestamps based on time intervals.
+Read through the entire conversation segment and identify EVERY moment where the topic actually changes. Do not limit yourself to a specific number of timestamps.
 
 Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
 
-Requirements:
-- Only create timestamps when there is a genuine topic change or subject shift
-- Use exact timestamps that appear in the subtitle content
+CRITICAL REQUIREMENTS:
+- Find ALL genuine topic changes in this segment, not just a few
+- A topic change is when the conversation shifts to a completely different subject
+- Use exact timestamps that appear in the subtitle content  
 - Use format "H:MM:SS" for time (e.g., "1:15:30", "2:45:00")
-- Keep descriptions under 100 characters and be specific about what the new topic is
-- Look for these indicators of topic changes:
-  * New subjects being introduced
-  * Transitions like "speaking of...", "that reminds me...", "changing topics..."
-  * Clear shifts in conversation focus
-  * Introductions of new stories or examples
-  * Breaks in conversation flow
+- Keep descriptions under 100 characters and be specific about the new topic
+- Look for these indicators:
+  * New subjects being introduced ("So let's talk about...")
+  * Clear transitions ("Speaking of...", "That reminds me...", "Moving on...")
+  * Shifts from one topic to another (politics to sports, tech to relationships, etc.)
+  * New stories, anecdotes, or examples being introduced
+  * Questions that introduce new topics
 
-Do NOT create timestamps just to fill time - only when topics genuinely change.
+If there are 20 topic changes, return 20 timestamps. If there are 3, return 3. Be comprehensive.
 
 Example:
 {{
   "timestamps": [
-    {{"time": "1:15:30", "description": "Transition from AI discussion to talk about dating apps"}},
-    {{"time": "1:28:45", "description": "New topic: Universal basic income debate begins"}}
+    {{"time": "1:15:30", "description": "Shift from AI discussion to dating app experiences"}},
+    {{"time": "1:28:45", "description": "New topic: Universal basic income debate"}},
+    {{"time": "1:42:15", "description": "Story about weird restaurant experience"}},
+    {{"time": "1:55:30", "description": "Discussion of new movie releases"}}
   ]
 }}"""
 
@@ -150,6 +153,13 @@ Context: {context if context else 'Podcast/video content'}
 Mark timestamps only when the conversation genuinely shifts to a new topic or subject."""
 
     try:
+        logger.info(f"Sending request to OpenAI for chunk {chunk_index + 1}")
+        logger.debug(f"Chunk {chunk_index + 1} content length: {len(formatted_content)} characters")
+        
+        if not openai_client:
+            logger.error("OpenAI client is None - API key not configured")
+            return []
+        
         response = openai_client.chat.completions.create(
             model="o4-mini-2025-04-16",
             messages=[
@@ -160,25 +170,43 @@ Mark timestamps only when the conversation genuinely shifts to a new topic or su
             response_format={"type": "json_object"}
         )
         
+        logger.debug(f"Raw response for chunk {chunk_index + 1}: {response}")
+        
         response_content = response.choices[0].message.content
+        logger.debug(f"Response content for chunk {chunk_index + 1}: {response_content}")
+        
         if not response_content:
-            logger.warning(f"Empty response for chunk {chunk_index + 1}")
+            logger.error(f"Empty response content for chunk {chunk_index + 1}")
+            logger.error(f"Full response object: {response}")
             return []
         
-        result = json.loads(response_content)
-        timestamps_data = result.get("timestamps", [])
-        
-        formatted_timestamps = []
-        for item in timestamps_data:
-            time = item.get("time", "")
-            description = item.get("description", "")
+        try:
+            result = json.loads(response_content)
+            timestamps_data = result.get("timestamps", [])
             
-            if time and description:
-                formatted_timestamps.append(f"{time} - {description}")
-        
-        logger.info(f"Generated {len(formatted_timestamps)} timestamps for chunk {chunk_index + 1}")
-        return formatted_timestamps
+            logger.info(f"Parsed {len(timestamps_data)} timestamps from chunk {chunk_index + 1}")
+            
+            formatted_timestamps = []
+            for item in timestamps_data:
+                time = item.get("time", "")
+                description = item.get("description", "")
+                
+                if time and description:
+                    formatted_timestamps.append(f"{time} - {description}")
+                else:
+                    logger.warning(f"Skipping invalid timestamp in chunk {chunk_index + 1}: {item}")
+            
+            logger.info(f"Generated {len(formatted_timestamps)} valid timestamps for chunk {chunk_index + 1}")
+            return formatted_timestamps
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error for chunk {chunk_index + 1}: {str(e)}")
+            logger.error(f"Raw content that failed to parse: {response_content}")
+            return []
         
     except Exception as e:
         logger.error(f"Error processing chunk {chunk_index + 1}: {str(e)}")
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return []
