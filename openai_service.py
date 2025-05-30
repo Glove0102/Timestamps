@@ -280,9 +280,9 @@ def _make_openai_request(system_prompt: str, user_prompt: str) -> List[str]:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_completion_tokens=4000,
+                max_completion_tokens=2000,
                 response_format={"type": "json_object"},
-                timeout=120  # Increased timeout
+                timeout=45  # Reduced timeout for faster processing
             )
             
             response_content = response.choices[0].message.content
