@@ -1,7 +1,8 @@
 import os
 import json
 import logging
-from typing import List, Dict
+from typing import List, Dict, Tuple
+from datetime import datetime, timedelta
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
@@ -140,3 +141,219 @@ def format_srt_for_openai(srt_entries: List[Dict[str, str]]) -> str:
         formatted_lines.append(f"[{entry['start']}] {entry['text']}")
     
     return '\n'.join(formatted_lines)
+
+def parse_srt_time_to_seconds(time_str: str) -> int:
+    """
+    Convert SRT timestamp to seconds.
+    
+    Args:
+        time_str (str): Time string in format HH:MM:SS.mmm or HH:MM:SS
+        
+    Returns:
+        int: Time in total seconds
+    """
+    try:
+        # Remove milliseconds if present (format: HH:MM:SS.mmm or HH:MM:SS,mmm)
+        if '.' in time_str:
+            time_str = time_str.split('.')[0]
+        elif ',' in time_str:
+            time_str = time_str.split(',')[0]
+        
+        # Parse HH:MM:SS
+        time_parts = time_str.split(':')
+        if len(time_parts) == 3:
+            hours, minutes, seconds = map(int, time_parts)
+            return hours * 3600 + minutes * 60 + seconds
+        else:
+            logger.warning(f"Invalid time format: {time_str}")
+            return 0
+    except (ValueError, IndexError) as e:
+        logger.warning(f"Failed to parse time '{time_str}': {e}")
+        return 0
+
+def get_video_duration_minutes(srt_entries: List[Dict[str, str]]) -> float:
+    """
+    Get total video duration in minutes from SRT entries.
+    
+    Args:
+        srt_entries (List[Dict[str, str]]): List of SRT entries
+        
+    Returns:
+        float: Video duration in minutes
+    """
+    if not srt_entries:
+        return 0
+    
+    # Get the end time of the last entry
+    last_entry = srt_entries[-1]
+    last_end_seconds = parse_srt_time_to_seconds(last_entry['end'])
+    return last_end_seconds / 60.0
+
+def chunk_srt_entries(srt_entries: List[Dict[str, str]], chunk_duration_minutes: int = 60) -> List[List[Dict[str, str]]]:
+    """
+    Split SRT entries into chunks based on duration.
+    
+    Args:
+        srt_entries (List[Dict[str, str]]): List of SRT entries
+        chunk_duration_minutes (int): Duration of each chunk in minutes
+        
+    Returns:
+        List[List[Dict[str, str]]]: List of SRT entry chunks
+    """
+    if not srt_entries:
+        return []
+    
+    chunks = []
+    current_chunk = []
+    chunk_duration_seconds = chunk_duration_minutes * 60
+    chunk_start_seconds = 0
+    
+    for entry in srt_entries:
+        entry_start_seconds = parse_srt_time_to_seconds(entry['start'])
+        
+        # If this entry would exceed the chunk duration, start a new chunk
+        if entry_start_seconds >= chunk_start_seconds + chunk_duration_seconds and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = []
+            chunk_start_seconds = entry_start_seconds
+        
+        current_chunk.append(entry)
+    
+    # Add the last chunk if it has entries
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    return chunks
+
+def generate_topic_timestamps_for_long_video(srt_entries: List[Dict[str, str]], context: str = None, chunk_duration_minutes: int = 60) -> List[str]:
+    """
+    Generate topic-based timestamps for long videos using chunking approach.
+    This function is used for videos over 2 hours long.
+    
+    Args:
+        srt_entries (List[Dict[str, str]]): List of SRT entries with start, end, text
+        context (str, optional): Additional context for better topic detection
+        chunk_duration_minutes (int): Duration of each chunk in minutes (default: 60)
+        
+    Returns:
+        List[str]: List of formatted timestamps with topic descriptions
+        
+    Raises:
+        OpenAIServiceError: If OpenAI API call fails or returns invalid response
+    """
+    if not openai_client:
+        raise OpenAIServiceError("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
+    
+    video_duration = get_video_duration_minutes(srt_entries)
+    logger.info(f"Processing long video: {video_duration:.1f} minutes duration with {len(srt_entries)} subtitle entries")
+    
+    # Split into chunks
+    chunks = chunk_srt_entries(srt_entries, chunk_duration_minutes)
+    logger.info(f"Split video into {len(chunks)} chunks of ~{chunk_duration_minutes} minutes each")
+    
+    all_timestamps = []
+    
+    for chunk_index, chunk in enumerate(chunks):
+        chunk_start_time = parse_srt_time_to_seconds(chunk[0]['start']) if chunk else 0
+        chunk_end_time = parse_srt_time_to_seconds(chunk[-1]['end']) if chunk else 0
+        chunk_duration = (chunk_end_time - chunk_start_time) / 60.0
+        
+        logger.info(f"Processing chunk {chunk_index + 1}/{len(chunks)}: {chunk_duration:.1f} minutes")
+        
+        try:
+            # Format chunk content for analysis
+            formatted_content = format_srt_for_openai(chunk)
+            
+            # Adjust system prompt for chunk processing
+            topics_per_hour = 10  # Base rate
+            expected_topics = max(2, int(topics_per_hour * chunk_duration / 60))
+            
+            system_prompt = f"""You are an expert at analyzing video content and identifying topic segments from subtitles. 
+Your task is to analyze subtitle text with timestamps and identify distinct topic segments or content changes.
+
+This is chunk {chunk_index + 1} of {len(chunks)} from a longer video. Focus on identifying {expected_topics}-{expected_topics + 2} meaningful topic segments within this chunk.
+
+Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
+Each timestamp should mark the beginning of a new topic or significant content shift.
+
+Guidelines:
+- Use the EXACT format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
+- Use the actual timestamps from the subtitle content, do not modify them
+- Descriptions should be brief but descriptive (80-140 characters)
+- Focus on meaningful content transitions, not minor topic shifts
+- Include {expected_topics}-{expected_topics + 2} topic segments for this chunk
+
+Example output format:
+{{
+  "timestamps": [
+    {{"time": "0:15:30", "description": "Technical details and examples"}},
+    {{"time": "0:28:45", "description": "Q&A and closing remarks"}}
+  ]
+}}"""
+
+            # Build the user prompt for this chunk
+            user_prompt = f"Analyze the following subtitle content chunk and identify topic segments:\n\n{formatted_content}"
+            
+            if context:
+                user_prompt += f"\n\nAdditional context: {context}"
+            
+            user_prompt += f"\n\nGenerate topic-based timestamps in JSON format as specified. This is chunk {chunk_index + 1} of a {video_duration:.0f}-minute video."
+            
+            logger.debug(f"Sending chunk {chunk_index + 1} to OpenAI with {len(chunk)} subtitle entries")
+            
+            # Make API call to OpenAI for this chunk
+            response = openai_client.chat.completions.create(
+                model="o4-mini-2025-04-16",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=3000,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse the response
+            response_content = response.choices[0].message.content
+            if not response_content:
+                logger.warning(f"Empty response from OpenAI for chunk {chunk_index + 1}")
+                continue
+                
+            logger.debug(f"Received response from OpenAI for chunk {chunk_index + 1}: {response_content[:200]}...")
+            
+            try:
+                result = json.loads(response_content)
+                timestamps_data = result.get("timestamps", [])
+                
+                # Format timestamps for this chunk
+                chunk_timestamps = []
+                for item in timestamps_data:
+                    time = item.get("time", "")
+                    description = item.get("description", "")
+                    
+                    if time and description:
+                        chunk_timestamps.append(f"{time} - {description}")
+                    else:
+                        logger.warning(f"Skipping malformed timestamp entry in chunk {chunk_index + 1}: {item}")
+                
+                if chunk_timestamps:
+                    all_timestamps.extend(chunk_timestamps)
+                    logger.info(f"Chunk {chunk_index + 1} generated {len(chunk_timestamps)} timestamps")
+                else:
+                    logger.warning(f"No valid timestamps generated for chunk {chunk_index + 1}")
+            
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse OpenAI JSON response for chunk {chunk_index + 1}: {str(e)}")
+                continue
+        
+        except Exception as e:
+            logger.error(f"Error processing chunk {chunk_index + 1}: {str(e)}")
+            continue
+    
+    if not all_timestamps:
+        raise OpenAIServiceError("No timestamps could be generated for any chunks")
+    
+    # Sort timestamps by time to ensure proper order
+    all_timestamps.sort(key=lambda x: parse_srt_time_to_seconds(x.split(' - ')[0]))
+    
+    logger.info(f"Successfully generated {len(all_timestamps)} total topic timestamps from {len(chunks)} chunks")
+    return all_timestamps
