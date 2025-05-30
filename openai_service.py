@@ -18,9 +18,66 @@ if not OPENAI_API_KEY:
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
+def calculate_time_based_chunks(srt_entries: List[Dict[str, str]]) -> List[int]:
+    """
+    Calculate chunk boundaries based on hour intervals, adjusted for topic boundaries.
+    
+    Args:
+        srt_entries (List[Dict[str, str]]): List of SRT entries
+        
+    Returns:
+        List[int]: List of indices where chunks should start
+    """
+    if not srt_entries:
+        return [0]
+    
+    chunk_boundaries = [0]  # Always start with the first entry
+    target_interval = 3600  # 1 hour in seconds
+    
+    start_time = time_to_seconds(srt_entries[0]['start'])
+    
+    for i, entry in enumerate(srt_entries):
+        current_time = time_to_seconds(entry['start'])
+        time_since_last_chunk = current_time - start_time
+        
+        # Check if we've passed an hour mark
+        if time_since_last_chunk >= target_interval:
+            # Look for a good break point within the next 10 minutes
+            search_end = min(i + 50, len(srt_entries))  # Roughly 10 minutes of entries
+            best_break = i
+            
+            for j in range(i, search_end):
+                if j >= len(srt_entries):
+                    break
+                    
+                text = srt_entries[j]['text'].strip()
+                # Look for sentence endings or natural breaks
+                if text.endswith(('.', '!', '?', '。', '！', '？')):
+                    best_break = j + 1
+                    break
+                
+                # Look for time gaps (potential topic breaks)
+                if j > 0:
+                    try:
+                        gap_time = time_to_seconds(srt_entries[j]['start'])
+                        prev_time = time_to_seconds(srt_entries[j-1]['end'])
+                        if gap_time - prev_time > 2.0:  # 2+ second gap
+                            best_break = j
+                            break
+                    except:
+                        pass
+            
+            chunk_boundaries.append(best_break)
+            start_time = time_to_seconds(srt_entries[best_break]['start']) if best_break < len(srt_entries) else current_time
+    
+    logger.debug(f"Created {len(chunk_boundaries)} time-based chunk boundaries at hours: {[time_to_seconds(srt_entries[idx]['start'])/3600 for idx in chunk_boundaries if idx < len(srt_entries)]}")
+    return chunk_boundaries
+
+
 def calculate_chunk_size(srt_entries: List[Dict[str, str]]) -> int:
     """
     Calculate optimal chunk size based on content length to stay within token limits.
+    This is used as a fallback when time-based chunking isn't suitable.
     
     Args:
         srt_entries (List[Dict[str, str]]): List of SRT entries
@@ -61,17 +118,55 @@ def time_to_seconds(time_str: str) -> float:
         return 0.0
 
 
-def create_smart_chunks(srt_entries: List[Dict[str, str]], chunk_size: int) -> List[Tuple[List[Dict[str, str]], int, int]]:
+def create_smart_chunks(srt_entries: List[Dict[str, str]], chunk_size: int = None) -> List[Tuple[List[Dict[str, str]], int, int]]:
     """
-    Create smart chunks with overlap, preferring sentence boundaries and natural breaks.
+    Create smart chunks based on time intervals (around every hour) with topic-aware boundaries.
     
     Args:
         srt_entries (List[Dict[str, str]]): List of SRT entries
-        chunk_size (int): Target size for each chunk
+        chunk_size (int, optional): Fallback chunk size if time-based chunking isn't suitable
         
     Returns:
         List[Tuple[List[Dict[str, str]], int, int]]: List of (chunk_entries, start_idx, end_idx)
     """
+    if not srt_entries:
+        return []
+    
+    # Get video duration to decide chunking strategy
+    first_time = time_to_seconds(srt_entries[0]['start'])
+    last_time = time_to_seconds(srt_entries[-1]['end'])
+    video_duration = last_time - first_time
+    
+    # Use time-based chunking for videos longer than 45 minutes
+    if video_duration > 2700:  # 45 minutes
+        chunk_boundaries = calculate_time_based_chunks(srt_entries)
+        chunks = []
+        overlap_size = 5  # Small overlap for context
+        
+        for i in range(len(chunk_boundaries)):
+            start_idx = chunk_boundaries[i]
+            
+            # Determine end index
+            if i + 1 < len(chunk_boundaries):
+                end_idx = chunk_boundaries[i + 1]
+            else:
+                end_idx = len(srt_entries)
+            
+            # Add overlap from previous chunk (except for first chunk)
+            if i > 0:
+                start_idx = max(0, start_idx - overlap_size)
+            
+            chunk_entries = srt_entries[start_idx:end_idx]
+            if chunk_entries:
+                chunks.append((chunk_entries, start_idx, end_idx - 1))
+        
+        logger.debug(f"Created {len(chunks)} time-based chunks for {video_duration/3600:.1f} hour video")
+        return chunks
+    
+    # Fall back to size-based chunking for shorter videos
+    if chunk_size is None:
+        chunk_size = calculate_chunk_size(srt_entries)
+    
     if len(srt_entries) <= chunk_size:
         return [(srt_entries, 0, len(srt_entries) - 1)]
     
@@ -122,7 +217,7 @@ def create_smart_chunks(srt_entries: List[Dict[str, str]], chunk_size: int) -> L
             break
         i = max(chunk_end - overlap_size, i + 1)
     
-    logger.debug(f"Created {len(chunks)} chunks with overlap")
+    logger.debug(f"Created {len(chunks)} size-based chunks with overlap")
     return chunks
 
 
@@ -168,42 +263,76 @@ def merge_chunk_results(chunk_results: List[List[str]], chunk_info: List[Tuple[L
 
 
 def _make_openai_request(system_prompt: str, user_prompt: str) -> List[str]:
-    """Make a request to OpenAI and parse the response."""
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        max_completion_tokens=4000,
-        response_format={"type": "json_object"},
-        timeout=90
-    )
+    """Make a request to OpenAI and parse the response with retry logic."""
+    import time
     
-    response_content = response.choices[0].message.content
-    if not response_content:
-        return []
+    if not openai_client:
+        raise OpenAIServiceError("OpenAI client not initialized. Please check your OPENAI_API_KEY.")
     
-    try:
-        result = json.loads(response_content)
-        timestamps_data = result.get("timestamps", [])
-        
-        # Format timestamps for display
-        formatted_timestamps = []
-        for item in timestamps_data:
-            time_str = item.get("time", "")
-            description = item.get("description", "")
+    max_retries = 3
+    base_delay = 1
+    
+    for attempt in range(max_retries):
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=4000,
+                response_format={"type": "json_object"},
+                timeout=120  # Increased timeout
+            )
             
-            if time_str and description:
-                formatted_timestamps.append(f"{time_str} - {description}")
+            response_content = response.choices[0].message.content
+            if not response_content:
+                return []
+            
+            try:
+                result = json.loads(response_content)
+                timestamps_data = result.get("timestamps", [])
+                
+                # Format timestamps for display
+                formatted_timestamps = []
+                for item in timestamps_data:
+                    time_str = item.get("time", "")
+                    description = item.get("description", "")
+                    
+                    if time_str and description:
+                        formatted_timestamps.append(f"{time_str} - {description}")
+                    else:
+                        logger.warning(f"Skipping malformed timestamp entry: {item}")
+                
+                return formatted_timestamps
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse OpenAI JSON response: {str(e)}")
+                raise OpenAIServiceError(f"Invalid JSON response from OpenAI: {str(e)}")
+                
+        except Exception as e:
+            error_msg = str(e).lower()
+            
+            if attempt < max_retries - 1:
+                if "rate limit" in error_msg or "timeout" in error_msg or "connection" in error_msg:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"OpenAI request failed (attempt {attempt + 1}/{max_retries}), retrying in {delay}s: {str(e)}")
+                    time.sleep(delay)
+                    continue
+            
+            # Handle specific error types
+            if "rate limit" in error_msg:
+                raise OpenAIServiceError("Rate limit exceeded. Please try again in a few minutes.")
+            elif "insufficient_quota" in error_msg or "quota" in error_msg:
+                raise OpenAIServiceError("OpenAI API quota exceeded. Please check your account.")
+            elif "authentication" in error_msg or "invalid" in error_msg:
+                raise OpenAIServiceError("Invalid OpenAI API key. Please check your OPENAI_API_KEY.")
+            elif "timeout" in error_msg or "connection" in error_msg:
+                raise OpenAIServiceError("Connection timeout. Please check your internet connection and try again.")
             else:
-                logger.warning(f"Skipping malformed timestamp entry: {item}")
-        
-        return formatted_timestamps
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse OpenAI JSON response: {str(e)}")
-        raise OpenAIServiceError(f"Invalid JSON response from OpenAI: {str(e)}")
+                raise OpenAIServiceError(f"OpenAI API error: {str(e)}")
+    
+    raise OpenAIServiceError("Failed to connect to OpenAI after multiple attempts.")
 
 
 def _process_single_chunk(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
@@ -289,9 +418,8 @@ def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = 
         raise OpenAIServiceError("OpenAI API key not configured. Please set OPENAI_API_KEY environment variable.")
     
     try:
-        # Calculate optimal chunk size and create chunks
-        chunk_size = calculate_chunk_size(srt_entries)
-        chunks = create_smart_chunks(srt_entries, chunk_size)
+        # Create smart chunks (time-based for long videos, size-based for short ones)
+        chunks = create_smart_chunks(srt_entries)
         
         logger.debug(f"Processing {len(srt_entries)} entries in {len(chunks)} chunks")
         
@@ -305,7 +433,11 @@ def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = 
         
         for chunk_idx, (chunk_entries, start_idx, end_idx) in enumerate(chunks):
             try:
-                logger.debug(f"Processing chunk {chunk_idx + 1}/{len(chunks)} (entries {start_idx+1}-{end_idx+1})")
+                # Calculate chunk duration for logging
+                chunk_start_time = time_to_seconds(chunk_entries[0]['start']) / 3600 if chunk_entries else 0
+                chunk_end_time = time_to_seconds(chunk_entries[-1]['end']) / 3600 if chunk_entries else 0
+                
+                logger.debug(f"Processing chunk {chunk_idx + 1}/{len(chunks)} (entries {start_idx+1}-{end_idx+1}, time {chunk_start_time:.1f}h-{chunk_end_time:.1f}h)")
                 
                 # Process chunk with context from previous chunks
                 chunk_timestamps = _process_chunk_with_context(
