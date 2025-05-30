@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import time
 from typing import List, Dict
 from openai import OpenAI
 
@@ -39,51 +38,8 @@ def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = 
         # Format SRT content for analysis
         formatted_content = format_srt_for_openai(srt_entries)
         
-        # Log content statistics
-        content_length = len(formatted_content)
-        content_words = len(formatted_content.split())
-        logger.info(f"Formatted content stats: {content_length} characters, ~{content_words} words")
-        
-        # Check if content might be too large (rough estimate: 1 token ≈ 4 characters)
-        estimated_tokens = content_length // 4
-        logger.info(f"Estimated input tokens: {estimated_tokens}")
-        
-        # Get the last timestamp to check video duration
-        if srt_entries:
-            last_entry = srt_entries[-1]
-            logger.info(f"Video duration: First entry at {srt_entries[0]['start']}, Last entry at {last_entry['end']}")
-        
-        # For very large videos, use chunking strategy
-        if estimated_tokens > 80000 or len(srt_entries) > 2000:
-            logger.info(f"Very large video detected ({estimated_tokens} tokens, {len(srt_entries)} entries). Using chunking strategy.")
-            return _generate_timestamps_chunked(srt_entries, context)
-        
-        # For regular large videos, try single request with higher token limit first
-        elif estimated_tokens > 30000 or len(srt_entries) > 800:
-            logger.info(f"Large video detected ({estimated_tokens} tokens, {len(srt_entries)} entries). Trying single request with extended limits.")
-            try:
-                return _generate_timestamps_single_extended(srt_entries, context, formatted_content)
-            except Exception as e:
-                logger.warning(f"Single request failed, falling back to chunking: {str(e)}")
-                return _generate_timestamps_chunked(srt_entries, context)
-        
-        # For smaller videos, use standard single request
-        return _generate_timestamps_single(srt_entries, context, formatted_content)
-    
-    except OpenAIServiceError:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in OpenAI service: {str(e)}")
-        raise OpenAIServiceError(f"Failed to generate timestamps: {str(e)}")
-
-def _generate_timestamps_single(srt_entries: List[Dict[str, str]], context: str = None, formatted_content: str = "") -> List[str]:
-    """Generate timestamps for smaller videos in a single API call."""
-    
-    if not openai_client:
-        raise OpenAIServiceError("OpenAI client not initialized")
-    
-    # Build the system prompt
-    system_prompt = """You are an expert at analyzing video content and identifying topic segments from subtitles. 
+        # Build the system prompt
+        system_prompt = """You are an expert at analyzing video content and identifying topic segments from subtitles. 
 Your task is to analyze subtitle text with timestamps and identify distinct topic segments or content changes.
 
 Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
@@ -93,8 +49,8 @@ Guidelines:
 - Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
 - Descriptions should be brief but descriptive and detailed as possible (under 115 characters)
 - Focus on meaningful content transitions, not minor topic shifts
-- Analyze the ENTIRE content provided - do not stop early
-- Generate timestamps throughout the full duration of the content
+- Longer the video, more the segments. Depending on content length
+- Start with "0:00:00" if the content begins immediately
 
 Example output format:
 {
@@ -106,302 +62,66 @@ Example output format:
   ]
 }"""
 
-    # Build the user prompt
-    user_prompt = f"Analyze the following subtitle content and identify topic segments:\n\n{formatted_content}"
-    
-    if context:
-        user_prompt += f"\n\nAdditional context: {context}"
-    
-    user_prompt += "\n\nIMPORTANT: Analyze the COMPLETE content provided. Generate timestamps throughout the entire duration, not just the beginning."
-    
-    logger.debug(f"Sending single request to OpenAI with {len(srt_entries)} subtitle entries")
-    
-    # Make API call to OpenAI
-    response = openai_client.chat.completions.create(
-        model="gpt-4.1-mini-2025-04-14",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        max_completion_tokens=15000,
-        response_format={"type": "json_object"},
-        timeout=120  # 2 minute timeout
-    )
-    
-    response_content = response.choices[0].message.content
-    if not response_content:
-        raise OpenAIServiceError("Empty response from OpenAI")
-    
-    return _parse_openai_response(response_content)
-
-def _generate_timestamps_single_extended(srt_entries: List[Dict[str, str]], context: str = None, formatted_content: str = "") -> List[str]:
-    """Generate timestamps for larger videos in a single API call with extended settings."""
-    
-    if not openai_client:
-        raise OpenAIServiceError("OpenAI client not initialized")
-    
-    # Build an enhanced system prompt for long content
-    system_prompt = """You are an expert at analyzing video content and identifying topic segments from subtitles. 
-Your task is to analyze subtitle text with timestamps and identify distinct topic segments or content changes.
-
-This is a LONG VIDEO (potentially several hours). Your job is to:
-1. Read through the ENTIRE content provided
-2. Identify major topic transitions and content shifts throughout the FULL duration
-3. Generate timestamps that span the complete video length
-
-Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
-Each timestamp should mark the beginning of a new topic or significant content shift.
-
-Guidelines:
-- Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45", "2:15:30")
-- Descriptions should be brief but descriptive (under 115 characters)
-- Focus on meaningful content transitions, not minor topic shifts
-- CRITICAL: Analyze the ENTIRE content provided - do not stop early
-- Generate timestamps throughout the COMPLETE duration of the video
-- For long videos, aim for timestamps every 10-20 minutes at major topic boundaries
-
-Example output format:
-{
-  "timestamps": [
-    {"time": "0:00:00", "description": "Introduction and sponsor mentions"},
-    {"time": "0:12:15", "description": "Main topic discussion begins"},
-    {"time": "0:35:30", "description": "Technical details and examples"},
-    {"time": "1:02:45", "description": "Guest interview segment"},
-    {"time": "1:28:15", "description": "Q&A and audience questions"},
-    {"time": "1:45:30", "description": "Final thoughts and conclusions"}
-  ]
-}"""
-
-    # Build the user prompt with emphasis on complete analysis
-    user_prompt = f"Analyze the following subtitle content and identify topic segments throughout the ENTIRE video:\n\n{formatted_content}"
-    
-    if context:
-        user_prompt += f"\n\nAdditional context: {context}"
-    
-    user_prompt += "\n\nCRITICAL INSTRUCTIONS:\n- Process the COMPLETE content provided\n- Generate timestamps covering the ENTIRE video duration\n- Do NOT stop analyzing partway through\n- Look at the timestamps to see the full video length and ensure your output covers it all"
-    
-    logger.debug(f"Sending extended single request to OpenAI with {len(srt_entries)} subtitle entries")
-    
-    # Make API call with extended token limits
-    response = openai_client.chat.completions.create(
-        model="gpt-4.1-mini-2025-04-14",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        max_completion_tokens=20000,  # Increased for longer outputs
-        response_format={"type": "json_object"},
-        timeout=180  # 3 minute timeout for larger requests
-    )
-    
-    response_content = response.choices[0].message.content
-    if not response_content:
-        raise OpenAIServiceError("Empty response from OpenAI")
-    
-    return _parse_openai_response(response_content)
-
-def _generate_timestamps_chunked(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
-    """Generate timestamps for large videos using chunking strategy."""
-    
-    if not openai_client:
-        raise OpenAIServiceError("OpenAI client not initialized")
-    
-    # Calculate chunk size (aim for ~80k tokens per chunk with overlap)
-    target_chars_per_chunk = 300000  # ~75k tokens
-    overlap_chars = 40000  # ~10k tokens overlap
-    
-    all_timestamps = []
-    chunks = _create_content_chunks(srt_entries, target_chars_per_chunk, overlap_chars)
-    
-    logger.info(f"Processing {len(chunks)} chunks for large video")
-    
-    for i, (chunk_entries, chunk_start_time, chunk_end_time) in enumerate(chunks):
-        logger.info(f"Processing chunk {i+1}/{len(chunks)} ({chunk_start_time} - {chunk_end_time})")
-        
-        formatted_chunk = format_srt_for_openai(chunk_entries)
-        
-        # Build chunk-specific system prompt
-        system_prompt = f"""You are an expert at analyzing video content and identifying topic segments from subtitles. 
-This is chunk {i+1} of {len(chunks)} from a longer video (time range: {chunk_start_time} - {chunk_end_time}).
-
-Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
-Each timestamp should mark the beginning of a new topic or significant content shift.
-
-Guidelines:
-- Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
-- Descriptions should be brief but descriptive (under 115 characters)
-- Focus on meaningful content transitions within this time segment
-- Only generate timestamps that fall within the time range {chunk_start_time} - {chunk_end_time}
-- Analyze the ENTIRE chunk content provided
-
-Example output format:
-{{
-  "timestamps": [
-    {{"time": "0:00:00", "description": "Topic description"}},
-    {{"time": "0:15:30", "description": "Another topic description"}}
-  ]
-}}"""
-
-        user_prompt = f"Analyze this portion of subtitle content (time range {chunk_start_time} - {chunk_end_time}):\n\n{formatted_chunk}"
+        # Build the user prompt
+        user_prompt = f"Analyze the following subtitle content and identify topic segments:\n\n{formatted_content}"
         
         if context:
-            user_prompt += f"\n\nVideo context: {context}"
+            user_prompt += f"\n\nAdditional context: {context}"
         
-        user_prompt += f"\n\nGenerate timestamps only for content within {chunk_start_time} - {chunk_end_time}."
+        user_prompt += "\n\nGenerate topic-based timestamps in JSON format as specified."
+        
+        logger.debug(f"Sending request to OpenAI with {len(srt_entries)} subtitle entries")
+        
+        # Make API call to OpenAI
+        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
+        # do not change this unless explicitly requested by the user
+        response = openai_client.chat.completions.create(
+            model="gpt-4.1-mini-2025-04-14",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_completion_tokens=10000,
+            response_format={"type": "json_object"}
+        )
+        
+        # Parse the response
+        response_content = response.choices[0].message.content
+        logger.debug(f"Received response from OpenAI: {response_content[:200]}...")
         
         try:
-            # Add retry logic for network issues
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    response = openai_client.chat.completions.create(
-                        model="gpt-4.1-mini-2025-04-14",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        max_completion_tokens=8000,
-                        response_format={"type": "json_object"},
-                        timeout=120  # 2 minute timeout
-                    )
-                    
-                    response_content = response.choices[0].message.content
-                    if not response_content:
-                        logger.warning(f"Empty response for chunk {i+1}")
-                        break
-                        
-                    chunk_timestamps = _parse_openai_response(response_content)
-                    all_timestamps.extend(chunk_timestamps)
-                    logger.info(f"Successfully processed chunk {i+1}/{len(chunks)} - got {len(chunk_timestamps)} timestamps")
-                    break  # Success, exit retry loop
-                    
-                except Exception as retry_error:
-                    error_msg = str(retry_error)
-                    # Check for specific timeout/connection errors
-                    if any(keyword in error_msg.lower() for keyword in ['timeout', 'connection', 'network', 'ssl', 'recv']):
-                        logger.warning(f"Network/timeout error on attempt {attempt + 1} for chunk {i+1}: {error_msg}")
-                    else:
-                        logger.warning(f"API error on attempt {attempt + 1} for chunk {i+1}: {error_msg}")
-                    
-                    if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 3  # Longer wait for network issues
-                        logger.info(f"Retrying chunk {i+1} in {wait_time} seconds...")
-                        time.sleep(wait_time)
-                    else:
-                        logger.error(f"All retry attempts failed for chunk {i+1}: {error_msg}")
-                        raise retry_error
+            result = json.loads(response_content)
+            timestamps_data = result.get("timestamps", [])
             
-        except Exception as e:
-            logger.error(f"Failed to process chunk {i+1} after all retries: {str(e)}")
-            # Continue with other chunks rather than failing completely
-            continue
-    
-    # Remove duplicates and sort by time
-    unique_timestamps = _deduplicate_timestamps(all_timestamps)
-    
-    logger.info(f"Generated {len(unique_timestamps)} total timestamps from {len(chunks)} chunks")
-    return unique_timestamps
-
-def _create_content_chunks(srt_entries: List[Dict[str, str]], target_chars: int, overlap_chars: int):
-    """Create overlapping chunks of SRT entries."""
-    chunks = []
-    current_chunk = []
-    current_chars = 0
-    
-    i = 0
-    while i < len(srt_entries):
-        entry = srt_entries[i]
-        entry_text = f"[{entry['start']}] {entry['text']}\n"
-        entry_chars = len(entry_text)
-        
-        # If adding this entry would exceed target, create a chunk
-        if current_chars + entry_chars > target_chars and current_chunk:
-            chunk_start = current_chunk[0]['start']
-            chunk_end = current_chunk[-1]['end']
-            chunks.append((current_chunk.copy(), chunk_start, chunk_end))
+            if not timestamps_data:
+                raise OpenAIServiceError("No timestamps found in OpenAI response")
             
-            # Start new chunk with overlap
-            overlap_start = max(0, len(current_chunk) - int(len(current_chunk) * 0.1))  # 10% overlap
-            current_chunk = current_chunk[overlap_start:]
-            current_chars = sum(len(f"[{e['start']}] {e['text']}\n") for e in current_chunk)
-        
-        current_chunk.append(entry)
-        current_chars += entry_chars
-        i += 1
-    
-    # Add final chunk if it has content
-    if current_chunk:
-        chunk_start = current_chunk[0]['start']
-        chunk_end = current_chunk[-1]['end']
-        chunks.append((current_chunk, chunk_start, chunk_end))
-    
-    return chunks
-
-def _parse_openai_response(response_content: str) -> List[str]:
-    """Parse OpenAI response and return formatted timestamps."""
-    logger.debug(f"Received response from OpenAI: {response_content[:200]}...")
-    
-    try:
-        result = json.loads(response_content)
-        timestamps_data = result.get("timestamps", [])
-        
-        if not timestamps_data:
-            raise OpenAIServiceError("No timestamps found in OpenAI response")
-        
-        # Format timestamps for display
-        formatted_timestamps = []
-        for item in timestamps_data:
-            time = item.get("time", "")
-            description = item.get("description", "")
+            # Format timestamps for display
+            formatted_timestamps = []
+            for item in timestamps_data:
+                time = item.get("time", "")
+                description = item.get("description", "")
+                
+                if time and description:
+                    formatted_timestamps.append(f"{time} - {description}")
+                else:
+                    logger.warning(f"Skipping malformed timestamp entry: {item}")
             
-            if time and description:
-                formatted_timestamps.append(f"{time} - {description}")
-            else:
-                logger.warning(f"Skipping malformed timestamp entry: {item}")
+            if not formatted_timestamps:
+                raise OpenAIServiceError("No valid timestamps generated")
+            
+            logger.info(f"Successfully generated {len(formatted_timestamps)} topic timestamps")
+            return formatted_timestamps
         
-        return formatted_timestamps
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse OpenAI JSON response: {str(e)}")
-        raise OpenAIServiceError(f"Invalid JSON response from OpenAI: {str(e)}")
-
-def _deduplicate_timestamps(timestamps: List[str]) -> List[str]:
-    """Remove duplicate timestamps and sort by time."""
-    seen = set()
-    unique = []
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse OpenAI JSON response: {str(e)}")
+            raise OpenAIServiceError(f"Invalid JSON response from OpenAI: {str(e)}")
     
-    # Parse and sort timestamps
-    parsed_timestamps = []
-    for ts in timestamps:
-        if " - " in ts:
-            time_part, desc_part = ts.split(" - ", 1)
-            parsed_timestamps.append((time_part.strip(), desc_part.strip(), ts))
-    
-    # Sort by time
-    def time_to_seconds(time_str):
-        try:
-            parts = time_str.split(":")
-            if len(parts) == 3:
-                h, m, s = map(int, parts)
-                return h * 3600 + m * 60 + s
-            elif len(parts) == 2:
-                m, s = map(int, parts)
-                return m * 60 + s
-            else:
-                return 0
-        except:
-            return 0
-    
-    parsed_timestamps.sort(key=lambda x: time_to_seconds(x[0]))
-    
-    # Remove duplicates (same time within 30 seconds)
-    for time_part, desc_part, full_ts in parsed_timestamps:
-        time_key = time_to_seconds(time_part) // 30  # Group by 30-second intervals
-        if time_key not in seen:
-            seen.add(time_key)
-            unique.append(full_ts)
-    
-    return unique
+    except OpenAIServiceError:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in OpenAI service: {str(e)}")
+        raise OpenAIServiceError(f"Failed to generate timestamps: {str(e)}")
 
 def format_srt_for_openai(srt_entries: List[Dict[str, str]]) -> str:
     """
