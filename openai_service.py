@@ -73,17 +73,18 @@ Example output format:
         
         logger.debug(f"Sending request to OpenAI with {len(srt_entries)} subtitle entries")
         
-        # Make API call to OpenAI
+        # Make API call to OpenAI with extended timeout
         # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
         # do not change this unless explicitly requested by the user
         response = openai_client.chat.completions.create(
-            model="gpt-4.1-mini-2025-04-14",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
             max_completion_tokens=10000,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            timeout=120  # 2 minutes timeout for large files
         )
         
         # Parse the response
