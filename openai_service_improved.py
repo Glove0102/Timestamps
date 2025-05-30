@@ -104,13 +104,6 @@ def process_video_chunk(chunk_entries: List[Dict[str, str]], chunk_index: int, t
     if not chunk_entries:
         return []
     
-    # Calculate how many timestamps to generate for this chunk
-    chunk_duration_minutes = (parse_srt_time_to_seconds(chunk_entries[-1]['end']) - 
-                             parse_srt_time_to_seconds(chunk_entries[0]['start'])) / 60.0
-    
-    # Target 1 timestamp every 3-4 minutes
-    expected_timestamps = max(3, int(chunk_duration_minutes / 3.5))
-    
     # Format entries for AI
     formatted_lines = []
     for entry in chunk_entries:
@@ -118,37 +111,43 @@ def process_video_chunk(chunk_entries: List[Dict[str, str]], chunk_index: int, t
     
     formatted_content = '\n'.join(formatted_lines)
     
-    system_prompt = f"""You are an expert at analyzing video content and identifying topic segments from subtitles.
+    system_prompt = f"""You are an expert at analyzing conversation content and identifying when topics change.
 
-This is chunk {chunk_index + 1} of {total_chunks} from a longer video. 
+This is chunk {chunk_index + 1} of {total_chunks} from a longer podcast/video.
 
-Analyze the subtitle content and create {expected_timestamps} topic-based timestamps for this specific segment.
+Analyze the conversation and identify ONLY the moments where the topic actually changes - don't generate timestamps based on time intervals.
 
 Return a JSON object with a "timestamps" array containing objects with "time" and "description" fields.
 
 Requirements:
-- Generate exactly {expected_timestamps} timestamps for this chunk
+- Only create timestamps when there is a genuine topic change or subject shift
 - Use exact timestamps that appear in the subtitle content
 - Use format "H:MM:SS" for time (e.g., "1:15:30", "2:45:00")
-- Keep descriptions under 100 characters and be specific about the topic
-- Distribute timestamps evenly throughout this chunk's duration
-- Look for natural topic changes, subject shifts, or conversation breaks
+- Keep descriptions under 100 characters and be specific about what the new topic is
+- Look for these indicators of topic changes:
+  * New subjects being introduced
+  * Transitions like "speaking of...", "that reminds me...", "changing topics..."
+  * Clear shifts in conversation focus
+  * Introductions of new stories or examples
+  * Breaks in conversation flow
+
+Do NOT create timestamps just to fill time - only when topics genuinely change.
 
 Example:
 {{
   "timestamps": [
-    {{"time": "1:15:30", "description": "Discussion about AI impact on creative industries"}},
-    {{"time": "1:28:45", "description": "Debate on universal basic income policies"}}
+    {{"time": "1:15:30", "description": "Transition from AI discussion to talk about dating apps"}},
+    {{"time": "1:28:45", "description": "New topic: Universal basic income debate begins"}}
   ]
 }}"""
 
-    user_prompt = f"""Analyze this video segment and create {expected_timestamps} timestamps:
+    user_prompt = f"""Analyze this conversation segment and identify ONLY genuine topic changes:
 
 {formatted_content}
 
 Context: {context if context else 'Podcast/video content'}
 
-Focus on identifying distinct topics and conversation shifts within this segment."""
+Mark timestamps only when the conversation genuinely shifts to a new topic or subject."""
 
     try:
         response = openai_client.chat.completions.create(
