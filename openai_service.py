@@ -46,6 +46,7 @@ Return a JSON object with a "timestamps" array containing objects with "time" an
 Each timestamp should mark the beginning of a new topic or significant content shift.
 
 Guidelines:
+- Cover the entire content duration with timestamps. IF the content ends before the last timestamp, include a final timestamp at the end.
 - Use the format "H:MM:SS" for timestamps (e.g., "0:00:15", "0:18:11", "1:23:45")
 - Descriptions should be brief but descriptive (20-60 characters)
 - Focus on meaningful content transitions, not minor topic shifts
