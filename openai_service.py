@@ -32,7 +32,7 @@ def calculate_time_based_chunks(srt_entries: List[Dict[str, str]]) -> List[int]:
         return [0]
     
     chunk_boundaries = [0]  # Always start with the first entry
-    target_interval = 3600  # 1 hour in seconds
+    target_interval = 1800  # 30 minutes in seconds (smaller chunks)
     
     start_time = time_to_seconds(srt_entries[0]['start'])
     
@@ -137,11 +137,11 @@ def create_smart_chunks(srt_entries: List[Dict[str, str]], chunk_size: int = Non
     last_time = time_to_seconds(srt_entries[-1]['end'])
     video_duration = last_time - first_time
     
-    # Use time-based chunking for videos longer than 45 minutes
-    if video_duration > 2700:  # 45 minutes
+    # Use time-based chunking for videos longer than 30 minutes (more aggressive)
+    if video_duration > 1800:  # 30 minutes
         chunk_boundaries = calculate_time_based_chunks(srt_entries)
         chunks = []
-        overlap_size = 5  # Small overlap for context
+        overlap_size = 3  # Smaller overlap for faster processing
         
         for i in range(len(chunk_boundaries)):
             start_idx = chunk_boundaries[i]
@@ -158,7 +158,13 @@ def create_smart_chunks(srt_entries: List[Dict[str, str]], chunk_size: int = Non
             
             chunk_entries = srt_entries[start_idx:end_idx]
             if chunk_entries:
-                chunks.append((chunk_entries, start_idx, end_idx - 1))
+                # Further split large chunks if they're still too big
+                if len(chunk_entries) > 200:  # Split very large chunks
+                    mid_point = len(chunk_entries) // 2
+                    chunks.append((chunk_entries[:mid_point], start_idx, start_idx + mid_point - 1))
+                    chunks.append((chunk_entries[mid_point:], start_idx + mid_point, end_idx - 1))
+                else:
+                    chunks.append((chunk_entries, start_idx, end_idx - 1))
         
         logger.debug(f"Created {len(chunks)} time-based chunks for {video_duration/3600:.1f} hour video")
         return chunks
@@ -282,7 +288,7 @@ def _make_openai_request(system_prompt: str, user_prompt: str) -> List[str]:
                 ],
                 max_completion_tokens=2000,
                 response_format={"type": "json_object"},
-                timeout=45  # Reduced timeout for faster processing
+                timeout=30  # Further reduced timeout
             )
             
             response_content = response.choices[0].message.content
