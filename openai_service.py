@@ -124,7 +124,8 @@ Example output format:
             {"role": "user", "content": user_prompt}
         ],
         max_completion_tokens=15000,
-        response_format={"type": "json_object"}
+        response_format={"type": "json_object"},
+        timeout=120  # 2 minute timeout
     )
     
     response_content = response.choices[0].message.content
@@ -189,7 +190,8 @@ Example output format:
             {"role": "user", "content": user_prompt}
         ],
         max_completion_tokens=20000,  # Increased for longer outputs
-        response_format={"type": "json_object"}
+        response_format={"type": "json_object"},
+        timeout=180  # 3 minute timeout for larger requests
     )
     
     response_content = response.choices[0].message.content
@@ -259,7 +261,8 @@ Example output format:
                             {"role": "user", "content": user_prompt}
                         ],
                         max_completion_tokens=8000,
-                        response_format={"type": "json_object"}
+                        response_format={"type": "json_object"},
+                        timeout=120  # 2 minute timeout
                     )
                     
                     response_content = response.choices[0].message.content
@@ -273,11 +276,19 @@ Example output format:
                     break  # Success, exit retry loop
                     
                 except Exception as retry_error:
+                    error_msg = str(retry_error)
+                    # Check for specific timeout/connection errors
+                    if any(keyword in error_msg.lower() for keyword in ['timeout', 'connection', 'network', 'ssl', 'recv']):
+                        logger.warning(f"Network/timeout error on attempt {attempt + 1} for chunk {i+1}: {error_msg}")
+                    else:
+                        logger.warning(f"API error on attempt {attempt + 1} for chunk {i+1}: {error_msg}")
+                    
                     if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 2  # Exponential backoff
-                        logger.warning(f"Attempt {attempt + 1} failed for chunk {i+1}, retrying in {wait_time}s: {str(retry_error)}")
+                        wait_time = (attempt + 1) * 3  # Longer wait for network issues
+                        logger.info(f"Retrying chunk {i+1} in {wait_time} seconds...")
                         time.sleep(wait_time)
                     else:
+                        logger.error(f"All retry attempts failed for chunk {i+1}: {error_msg}")
                         raise retry_error
             
         except Exception as e:
