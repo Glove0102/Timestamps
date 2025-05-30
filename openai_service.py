@@ -47,9 +47,14 @@ def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = 
         estimated_tokens = content_length // 4
         logger.info(f"Estimated input tokens: {estimated_tokens}")
         
-        # Use chunking strategy for large videos
-        if estimated_tokens > 100000:  # Conservative limit for gpt-4.1-mini
-            logger.info(f"Large video detected ({estimated_tokens} tokens). Using chunking strategy.")
+        # Get the last timestamp to check video duration
+        if srt_entries:
+            last_entry = srt_entries[-1]
+            logger.info(f"Video duration: First entry at {srt_entries[0]['start']}, Last entry at {last_entry['end']}")
+        
+        # Use chunking strategy for large videos (lowered threshold significantly)
+        if estimated_tokens > 50000 or len(srt_entries) > 1000:  # Much more conservative limit
+            logger.info(f"Large video detected ({estimated_tokens} tokens, {len(srt_entries)} entries). Using chunking strategy.")
             return _generate_timestamps_chunked(srt_entries, context)
         
         # For smaller videos, use single request
