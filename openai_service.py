@@ -261,11 +261,15 @@ def generate_topic_timestamps_for_long_video(srt_entries: List[Dict[str, str]], 
     all_timestamps = []
     
     for chunk_index, chunk in enumerate(chunks):
-        chunk_start_time = parse_srt_time_to_seconds(chunk[0]['start']) if chunk else 0
-        chunk_end_time = parse_srt_time_to_seconds(chunk[-1]['end']) if chunk else 0
+        if not chunk:
+            logger.warning(f"Chunk {chunk_index + 1} is empty, skipping")
+            continue
+            
+        chunk_start_time = parse_srt_time_to_seconds(chunk[0]['start'])
+        chunk_end_time = parse_srt_time_to_seconds(chunk[-1]['end'])
         chunk_duration = (chunk_end_time - chunk_start_time) / 60.0
         
-        logger.info(f"Processing chunk {chunk_index + 1}/{len(chunks)}: {chunk_duration:.1f} minutes")
+        logger.info(f"Processing chunk {chunk_index + 1}/{len(chunks)}: {chunk_duration:.1f} minutes ({chunk[0]['start']} to {chunk[-1]['end']}) with {len(chunk)} entries")
         
         try:
             # Format chunk content for analysis
@@ -368,6 +372,17 @@ Example output format:
             
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse OpenAI JSON response for chunk {chunk_index + 1}: {str(e)}")
+                logger.debug(f"Raw response that failed parsing: {response_content}")
+                
+                # Try fallback extraction even on JSON parse errors
+                import re
+                time_pattern = r'\d{1,2}:\d{2}:\d{2}'
+                found_times = re.findall(time_pattern, response_content)
+                if found_times:
+                    logger.info(f"Using fallback extraction for chunk {chunk_index + 1}: {found_times}")
+                    for time_stamp in found_times[:expected_topics]:
+                        fallback_desc = f"Topic segment from chunk {chunk_index + 1}"
+                        all_timestamps.append(f"{time_stamp} - {fallback_desc}")
                 continue
         
         except Exception as e:
