@@ -73,10 +73,9 @@ Example output format:
         logger.debug(f"Sending request to OpenAI with {len(srt_entries)} subtitle entries")
         
         # Make API call to OpenAI
-        # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-        # do not change this unless explicitly requested by the user
+        # Using gpt-4o-mini which is a cost-effective model for this task
         response = openai_client.chat.completions.create(
-            model="o4-mini-2025-04-16",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -87,6 +86,9 @@ Example output format:
         
         # Parse the response
         response_content = response.choices[0].message.content
+        if not response_content:
+            raise OpenAIServiceError("Empty response from OpenAI")
+        
         logger.debug(f"Received response from OpenAI: {response_content[:200]}...")
         
         try:
