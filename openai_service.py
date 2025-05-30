@@ -15,7 +15,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not found in environment variables")
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+openai_client = OpenAI(api_key=OPENAI_API_KEY, timeout=240.0) if OPENAI_API_KEY else None
 
 def generate_topic_timestamps(srt_entries: List[Dict[str, str]], context: str = None) -> List[str]:
     """
