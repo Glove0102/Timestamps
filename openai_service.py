@@ -276,7 +276,7 @@ def generate_topic_timestamps_for_long_video(srt_entries: List[Dict[str, str]], 
             formatted_content = format_srt_for_openai(chunk)
             
             # Adjust system prompt for chunk processing
-            topics_per_hour = 8  # Base rate - more conservative
+            topics_per_hour = 12  # Base rate - more conservative
             expected_topics = max(3, int(topics_per_hour * chunk_duration / 60))
             
             system_prompt = f"""You are an expert at analyzing video content and identifying topic segments from subtitles. 
@@ -293,14 +293,15 @@ CRITICAL REQUIREMENTS:
 - Use the EXACT format "H:MM:SS" for timestamps (e.g., "0:15:30", "1:18:11", "2:23:45")
 - Look for natural conversation breaks, topic changes, or content shifts
 - Include timestamps from the beginning, middle, and end of the chunk
-- Descriptions should be 60-120 characters and describe what's happening
+- Descriptions should be 140 characters or less and should describe in detail what the topic is about
 
 Example output format:
 {{
   "timestamps": [
-    {{"time": "1:15:30", "description": "Discussion about technical details and implementation"}},
-    {{"time": "1:28:45", "description": "Audience questions and answers session"}},
-    {{"time": "1:42:15", "description": "Moving to next major topic or segment"}}
+    {{"time": "1:15:30", "description": "Technical specs of the Apple II: Is 16kb of RAM enough?"}},
+    {{"time": "1:28:45", "description": "New Movies & Movie Theater Snack Pricing Discussion"}},
+    {{"time": "1:42:15", "description": "Top or Bottom Half Mermaid: Which would you choose?"}},
+    {{"time": "1:55:15", "description": "The boys call it a show and thank you all for watching."}}
   ]
 }}"""
 
