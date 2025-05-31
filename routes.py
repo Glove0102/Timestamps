@@ -5,8 +5,7 @@ from werkzeug.utils import secure_filename
 from app import app, db
 from models import TimestampRequest
 from srt_parser import parse_srt_file, SRTParseError
-from openai_service import generate_topic_timestamps, get_video_duration_minutes, OpenAIServiceError
-from openai_service_improved import generate_timestamps_for_long_video_simple
+from openai_service import generate_topic_timestamps, OpenAIServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -74,18 +73,8 @@ def generate_timestamps():
             if not srt_entries:
                 raise SRTParseError("No valid SRT entries found in file")
             
-            # Check video duration and choose appropriate processing method
-            video_duration_minutes = get_video_duration_minutes(srt_entries)
-            logger.info(f"Video duration: {video_duration_minutes:.1f} minutes")
-            
-            # Use improved approach for videos over 2 hours (120 minutes)
-            if video_duration_minutes > 120:
-                logger.info("Using improved approach for long video")
-                timestamps = generate_timestamps_for_long_video_simple(srt_entries, context)
-            else:
-                logger.info("Using standard approach for regular video")
-                timestamps = generate_topic_timestamps(srt_entries, context)
-            
+            # Generate timestamps using OpenAI
+            timestamps = generate_topic_timestamps(srt_entries, context)
             logger.debug(f"Generated {len(timestamps)} topic timestamps")
             
             # Update database record with results
